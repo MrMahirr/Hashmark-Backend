@@ -1,4 +1,4 @@
-package dev.hashmark.debt.dto;
+package dev.hashmark.debt.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class DebtDto {
+public class Debt {
     private Long id;
     private Long repoId;
     private String filePath;

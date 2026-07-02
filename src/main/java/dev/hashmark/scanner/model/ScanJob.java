@@ -1,4 +1,4 @@
-package dev.hashmark.debt.dto;
+package dev.hashmark.scanner.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -11,13 +11,12 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class DebtDto {
+public class ScanJob {
     private Long id;
     private Long repoId;
-    private String filePath;
-    private Integer lineNo;
-    private String label;
-    private String content;
-    private LocalDateTime detectedAt;
-    private LocalDateTime resolvedAt;
+    private String status;
+    private LocalDateTime startedAt;
+    private LocalDateTime finishedAt;
+    private Integer debtFound;
+    private LocalDateTime createdAt;
 }

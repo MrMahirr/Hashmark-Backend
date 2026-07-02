@@ -464,13 +464,13 @@
 
 ### 6.1 - Model
 
-- [ ] `scanner/model/ScanJob.java` olustur:
+- [x] `scanner/model/ScanJob.java` olustur:
   - Alanlar: `Long id`, `Long repoId`, `String status`, `LocalDateTime startedAt`, `LocalDateTime finishedAt`, `Integer debtFound`, `LocalDateTime createdAt`
   - Lombok: `@Data`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor`
 
 ### 6.2 - DebtParserService (Kritik)
 
-- [ ] `scanner/service/DebtParserService.java` olustur:
+- [x] `scanner/service/DebtParserService.java` olustur:
   - `@Service`
   - Regex pattern'lari (CASE_INSENSITIVE):
     ```java
@@ -491,7 +491,7 @@
 
 ### 6.3 - GitHubFileService
 
-- [ ] `scanner/service/GitHubFileService.java` olustur:
+- [x] `scanner/service/GitHubFileService.java` olustur:
   - `@Service`, `RestTemplate` inject
   - Desteklenen uzantilar (Set):
     ```
@@ -511,7 +511,7 @@
 
 ### 6.4 - Repository
 
-- [ ] `scanner/repository/ScanJobRepository.java` olustur:
+- [x] `scanner/repository/ScanJobRepository.java` olustur:
   - `@Repository`, `JdbcTemplate` inject
   - `RowMapper<ScanJob>` tanimla
   - `ScanJob save(ScanJob job)`:
@@ -534,7 +534,7 @@
 
 ### 6.5 - ScanJobProcessor (Async)
 
-- [ ] `scanner/job/ScanJobProcessor.java` olustur:
+- [x] `scanner/job/ScanJobProcessor.java` olustur:
   - `@Component`
   - Inject: `ScanJobRepository`, `GitHubFileService`, `DebtParserService`, `DebtRepository`, `UserRepository`, `RepoRepository`, `AesEncryptionUtil`
   - `@Async("taskExecutor")`
@@ -561,7 +561,7 @@
 
 ### 6.6 - Service ve Controller
 
-- [ ] `scanner/service/ScanService.java` olustur:
+- [x] `scanner/service/ScanService.java` olustur:
   - `@Service`
   - Inject: `RepoRepository`, `ScanJobProcessor`, `ScanJobRepository`
   - `Map<String, Object> startScan(Long repoId, Long userId)`:
@@ -572,7 +572,7 @@
     1. Repo sahiplik kontrolu
     2. `scanJobRepository.findLatestByRepoId(repoId)` -> job
 
-- [ ] `scanner/controller/ScanController.java` olustur:
+- [x] `scanner/controller/ScanController.java` olustur:
   - `@RestController`, `@RequestMapping("/scan")`, `@Tag(name = "Scan")`
 
   - `@PostMapping("/{repoId}")`
@@ -586,7 +586,7 @@
 
 ### ✅ ADIM 6 Dogrulama
 
-- [ ] `DebtParserServiceTest.java` yazilir ve gecer:
+- [x] `DebtParserServiceTest.java` yazilir ve gecer:
   ```
   Test input:
     "// TODO: implement this\n"
@@ -596,8 +596,8 @@
     "-- XXX: database issue\n"
   Expected: 4 debt bulunur (TODO, FIXME, HACK, XXX)
   ```
-- [ ] `mvn compile` hatasiz
-- [ ] Swagger'dan repo taramasi baslatilir -> 202
+- [x] `mvn compile` hatasiz
+- [x] Swagger'dan repo taramasi baslatilir -> 202
 - [ ] Status sorgulanir -> RUNNING, ardindan DONE olur
 - [ ] `mvn test` gecer
 

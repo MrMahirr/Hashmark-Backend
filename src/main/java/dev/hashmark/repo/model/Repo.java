@@ -1,4 +1,4 @@
-package dev.hashmark.repo.dto;
+package dev.hashmark.repo.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class RepoDto {
+public class Repo {
     private Long id;
     private Long userId;
     private String githubRepoId;
