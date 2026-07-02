@@ -1,0 +1,7 @@
+CREATE TABLE user_settings (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    email_notify BOOLEAN DEFAULT TRUE,
+    notify_day VARCHAR(10) DEFAULT 'MONDAY',
+    created_at TIMESTAMP DEFAULT NOW()
+);

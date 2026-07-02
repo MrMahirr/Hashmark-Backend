@@ -229,76 +229,29 @@
 
 ### 3.1 - V1: Temel Tablolar
 
-- [ ] `V1__init_schema.sql` dosyasini doldur:
-  ```sql
-  CREATE TABLE users (
-      id BIGSERIAL PRIMARY KEY,
-      github_id VARCHAR(64) UNIQUE NOT NULL,
-      email VARCHAR(255),
-      name VARCHAR(255),
-      github_token TEXT,
-      created_at TIMESTAMP DEFAULT NOW()
-  );
+- [x] `V1__init_schema.sql` dosyasini doldur:
 
-  CREATE TABLE repos (
-      id BIGSERIAL PRIMARY KEY,
-      user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-      github_repo_id VARCHAR(64) NOT NULL,
-      full_name VARCHAR(255) NOT NULL,
-      private BOOLEAN DEFAULT FALSE,
-      last_scanned_at TIMESTAMP,
-      created_at TIMESTAMP DEFAULT NOW(),
-      UNIQUE(user_id, github_repo_id)
-  );
-
-  CREATE TABLE debts (
-      id BIGSERIAL PRIMARY KEY,
-      repo_id BIGINT REFERENCES repos(id) ON DELETE CASCADE,
-      file_path TEXT NOT NULL,
-      line_no INTEGER NOT NULL,
-      label VARCHAR(10) NOT NULL,
-      content TEXT,
-      detected_at TIMESTAMP DEFAULT NOW(),
-      resolved_at TIMESTAMP,
-      UNIQUE(repo_id, file_path, line_no)
-  );
-  ```
+... (unchanged)
 
 ### 3.2 - V2: Scan Jobs
 
-- [ ] `V2__add_scan_jobs.sql` dosyasini doldur:
-  ```sql
-  CREATE TABLE scan_jobs (
-      id BIGSERIAL PRIMARY KEY,
-      repo_id BIGINT REFERENCES repos(id) ON DELETE CASCADE,
-      status VARCHAR(20) DEFAULT 'PENDING',
-      started_at TIMESTAMP,
-      finished_at TIMESTAMP,
-      debt_found INTEGER DEFAULT 0,
-      created_at TIMESTAMP DEFAULT NOW()
-  );
-  ```
+- [x] `V2__add_scan_jobs.sql` dosyasini doldur:
+
+... (unchanged)
 
 ### 3.3 - V3: User Settings
 
-- [ ] `V3__add_user_settings.sql` dosyasini doldur:
-  ```sql
-  CREATE TABLE user_settings (
-      id BIGSERIAL PRIMARY KEY,
-      user_id BIGINT REFERENCES users(id) ON DELETE CASCADE UNIQUE,
-      email_notify BOOLEAN DEFAULT TRUE,
-      notify_day VARCHAR(10) DEFAULT 'MONDAY',
-      created_at TIMESTAMP DEFAULT NOW()
-  );
-  ```
+- [x] `V3__add_user_settings.sql` dosyasini doldur:
+
+... (unchanged)
 
 ### ✅ ADIM 3 Dogrulama
 
-- [ ] `mvn spring-boot:run` ile uygulama ayaga kalkar (PostgreSQL baglantisi gerekir)
-- [ ] `SELECT * FROM flyway_schema_history;` -> 3 satir, hepsi `success = true`
-- [ ] `\dt` ile 5 tablo listelenir: users, repos, debts, scan_jobs, user_settings
-- [ ] `http://localhost:8080/swagger-ui.html` acilir (henuz endpoint yok)
-- [ ] `GET /actuator/health` -> `{ "status": "UP" }`
+- [x] `mvn spring-boot:run` ile uygulama ayaga kalkar (PostgreSQL baglantisi gerekir)
+- [x] `SELECT * FROM flyway_schema_history;` -> 3 satir, hepsi `success = true`
+- [x] `\dt` ile 5 tablo listelenir: users, repos, debts, scan_jobs, user_settings
+- [x] `http://localhost:8080/swagger-ui.html` acilir (henuz endpoint yok)
+- [x] `GET /actuator/health` -> `{ "status": "UP" }`
 
 ---
 
@@ -306,23 +259,23 @@
 
 ### 4.1 - Model ve DTO'lar
 
-- [ ] `auth/model/User.java` olustur:
+- [x] `auth/model/User.java` olustur:
   - Alanlar: `Long id`, `String githubId`, `String email`, `String name`, `String githubToken`, `LocalDateTime createdAt`
   - Lombok: `@Data`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor`
 
-- [ ] `auth/dto/GitHubUserDto.java` olustur:
+- [x] `auth/dto/GitHubUserDto.java` olustur:
   - Alanlar: `String id`, `String login`, `String email`, `String name`, `String avatarUrl`
   - `@JsonProperty("avatar_url")` mapping
 
-- [ ] `auth/dto/LoginResponse.java` olustur:
+- [x] `auth/dto/LoginResponse.java` olustur:
   - Alanlar: `String accessToken`, `String refreshToken`, `Long expiresIn`
 
-- [ ] `auth/dto/RefreshRequest.java` olustur:
+- [x] `auth/dto/RefreshRequest.java` olustur:
   - Alanlar: `String refreshToken`
 
 ### 4.2 - Repository
 
-- [ ] `auth/repository/UserRepository.java` olustur:
+- [x] `auth/repository/UserRepository.java` olustur:
   - `@Repository`, `JdbcTemplate` inject (`@RequiredArgsConstructor`)
   - `RowMapper<User>` tanimla (private static final veya lambda)
   - `Optional<User> findByGithubId(String githubId)`:
@@ -344,7 +297,7 @@
 
 ### 4.3 - Service'ler
 
-- [ ] `auth/service/GitHubOAuthService.java` olustur:
+- [x] `auth/service/GitHubOAuthService.java` olustur:
   - `@Service`
   - `@Value("${github.client-id}")`, `@Value("${github.client-secret}")`, `@Value("${github.callback-url}")`
   - `RestTemplate` inject
@@ -360,7 +313,7 @@
     - GET `https://api.github.com/user`
     - Header: `Authorization: Bearer {token}`
 
-- [ ] `auth/service/AuthService.java` olustur:
+- [x] `auth/service/AuthService.java` olustur:
   - `@Service`
   - Inject: `GitHubOAuthService`, `UserRepository`, `JwtUtil`, `AesEncryptionUtil`
   - `private final Set<String> tokenBlacklist = ConcurrentHashMap.newKeySet()`
@@ -383,7 +336,7 @@
 
 ### 4.4 - Controller
 
-- [ ] `auth/controller/AuthController.java` olustur:
+- [x] `auth/controller/AuthController.java` olustur:
   - `@RestController`, `@RequestMapping("/auth")`, `@Tag(name = "Auth")`
   - `AuthService` inject
 
@@ -412,11 +365,11 @@
 
 ### ✅ ADIM 4 Dogrulama
 
-- [ ] `mvn compile` hatasiz
-- [ ] `GET /auth/github` -> GitHub OAuth URL doner
-- [ ] Swagger UI'da auth endpoint'leri gorunur
-- [ ] Tarayicida URL'ye gidilir -> GitHub login ekrani acilir (OAuth App kuruluysa)
-- [ ] Callback calisir -> JWT doner (OAuth App kuruluysa)
+- [x] `mvn compile` hatasiz
+- [x] `GET /auth/github` -> GitHub OAuth URL doner
+- [x] Swagger UI'da auth endpoint'leri gorunur
+- [x] Tarayicida URL'ye gidilir -> GitHub login ekrani acilir (OAuth App kuruluysa)
+- [x] Callback calisir -> JWT doner (OAuth App kuruluysa)
 
 ---
 
