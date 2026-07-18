@@ -607,19 +607,19 @@
 
 ### 7.1 - Model ve DTO'lar
 
-- [ ] `debt/model/Debt.java` olustur:
+- [x] `debt/model/Debt.java` olustur:
   - Alanlar: `Long id`, `Long repoId`, `String filePath`, `Integer lineNo`, `String label`, `String content`, `LocalDateTime detectedAt`, `LocalDateTime resolvedAt`
 
-- [ ] `debt/dto/DebtDto.java` olustur:
+- [x] `debt/dto/DebtDto.java` olustur:
   - Tum Debt alanlari + `repoFullName`
 
-- [ ] `debt/dto/DebtFilterRequest.java` olustur:
+- [x] `debt/dto/DebtFilterRequest.java` olustur:
   - `Long repoId`, `String label`, `String status` (open/resolved), `int page`, `int size`
 
-- [ ] `debt/dto/DebtStatsDto.java` olustur:
+- [x] `debt/dto/DebtStatsDto.java` olustur:
   - `int total`, `int addedThisWeek`, `int resolvedThisWeek`
 
-- [ ] `debt/dto/PageResponse.java` olustur (generic):
+- [x] `debt/dto/PageResponse.java` olustur (generic):
   ```java
   @Data @Builder
   public class PageResponse<T> {
@@ -633,7 +633,7 @@
 
 ### 7.2 - Repository
 
-- [ ] `debt/repository/DebtRepository.java` olustur:
+- [x] `debt/repository/DebtRepository.java` olustur:
   - `@Repository`, `JdbcTemplate` inject
   - `RowMapper<Debt>` tanimla
   - `PageResponse<Debt> findByFilter(...)`:
@@ -668,11 +668,11 @@
 
 ### 7.3 - Service ve Controller
 
-- [ ] `debt/service/DebtService.java` olustur:
+- [x] `debt/service/DebtService.java` olustur:
   - `listDebts(Long userId, DebtFilterRequest filter)` -> `PageResponse<DebtDto>`
   - `getStats(Long userId, Long repoId)` -> `DebtStatsDto`
 
-- [ ] `debt/controller/DebtController.java` olustur:
+- [x] `debt/controller/DebtController.java` olustur:
   - `@RestController`, `@RequestMapping("/debts")`, `@Tag(name = "Debts")`
 
   - `@GetMapping`
@@ -687,11 +687,11 @@
 
 ### ✅ ADIM 7 Dogrulama
 
-- [ ] `mvn compile` hatasiz
-- [ ] Tarama tamamlandiktan sonra `GET /debts?repoId=1` -> gercek borclar doner
-- [ ] `GET /debts?repoId=1&label=TODO&status=open` -> filtrelenmis sonuclar
-- [ ] `GET /debts/stats?repoId=1` -> dogru sayilar
-- [ ] Sayfalama calisir: `page=0&size=5` -> 5 kayit
+- [x] `mvn compile` hatasiz
+- [x] Tarama tamamlandiktan sonra `GET /debts?repoId=1` -> gercek borclar doner
+- [x] `GET /debts?repoId=1&label=TODO&status=open` -> filtrelenmis sonuclar
+- [x] `GET /debts/stats?repoId=1` -> dogru sayilar
+- [x] Sayfalama calisir: `page=0&size=5` -> 5 kayit
 
 ---
 
@@ -699,21 +699,21 @@
 
 ### 8.1 - DTO'lar
 
-- [ ] `report/dto/TrendDataPoint.java`:
+- [x] `report/dto/TrendDataPoint.java`:
   - `LocalDate weekStart`, `int totalDebts`, `int newDebts`, `int resolvedDebts`
 
-- [ ] `report/dto/LabelStats.java`:
+- [x] `report/dto/LabelStats.java`:
   - `int todoCount`, `int fixmeCount`, `int hackCount`, `int xxxCount`
 
-- [ ] `report/dto/ModuleDebtInfo.java`:
+- [x] `report/dto/ModuleDebtInfo.java`:
   - `String modulePath`, `int debtCount`
 
-- [ ] `report/dto/SummaryResponse.java`:
+- [x] `report/dto/SummaryResponse.java`:
   - `List<TrendDataPoint> trendData`, `LabelStats labelStats`, `List<ModuleDebtInfo> topModules`
 
 ### 8.2 - ReportService
 
-- [ ] `report/service/ReportService.java` olustur:
+- [x] `report/service/ReportService.java` olustur:
   - `@Service`, `JdbcTemplate` inject
   - `SummaryResponse getSummary(Long userId, Long repoId)`:
     - **Trend verisi** (son 8 hafta):
@@ -743,7 +743,7 @@
 
 ### 8.3 - EmailService
 
-- [ ] `report/service/EmailService.java` olustur:
+- [x] `report/service/EmailService.java` olustur:
   - `@Service`
   - `@Value("${resend.api-key}")` ve `@Value("${resend.from-email}")`
   - `RestTemplate` inject
@@ -768,7 +768,7 @@
 
 ### 8.4 - WeeklyReportScheduler
 
-- [ ] `report/scheduler/WeeklyReportScheduler.java` olustur:
+- [x] `report/scheduler/WeeklyReportScheduler.java` olustur:
   - `@Component`
   - Inject: `UserSettingsRepository`, `EmailService`, `UserRepository`
   - `@Scheduled(cron = "0 0 8 * * MON")`
@@ -779,7 +779,7 @@
 
 ### 8.5 - Controller
 
-- [ ] `report/controller/ReportController.java` olustur:
+- [x] `report/controller/ReportController.java` olustur:
   - `@RestController`, `@RequestMapping("/report")`, `@Tag(name = "Report")`
 
   - `@GetMapping("/summary")`
@@ -793,10 +793,10 @@
 
 ### ✅ ADIM 8 Dogrulama
 
-- [ ] `mvn compile` hatasiz
-- [ ] `GET /report/summary?repoId=1` -> trend, label, modul verisi doner
-- [ ] `POST /report/send-test` -> 200 (Resend API key varsa e-posta gider)
-- [ ] Scheduler dogru konfigure edilmis (`@Scheduled` cron ifadesi)
+- [x] `mvn compile` hatasiz
+- [x] `GET /report/summary?repoId=1` -> trend, label, modul verisi doner
+- [x] `POST /report/send-test` -> 200 (Resend API key varsa e-posta gider)
+- [x] Scheduler dogru konfigure edilmis (`@Scheduled` cron ifadesi)
 
 ---
 

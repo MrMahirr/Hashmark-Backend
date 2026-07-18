@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 public class DebtDto {
     private Long id;
     private Long repoId;
+    private String repoFullName; // Eklenen alan
     private String filePath;
     private Integer lineNo;
     private String label;
