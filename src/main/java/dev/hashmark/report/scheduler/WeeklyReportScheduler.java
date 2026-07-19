@@ -1,8 +1,8 @@
 package dev.hashmark.report.scheduler;
 
 import dev.hashmark.auth.model.User;
-import dev.hashmark.auth.repository.UserRepository;
 import dev.hashmark.report.service.EmailService;
+import dev.hashmark.settings.repository.UserSettingsRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -12,18 +12,16 @@ import java.util.List;
 public class WeeklyReportScheduler {
 
     private final EmailService emailService;
-    private final UserRepository userRepository;
+    private final UserSettingsRepository userSettingsRepository;
 
-    public WeeklyReportScheduler(EmailService emailService, UserRepository userRepository) {
+    public WeeklyReportScheduler(EmailService emailService, UserSettingsRepository userSettingsRepository) {
         this.emailService = emailService;
-        this.userRepository = userRepository;
+        this.userSettingsRepository = userSettingsRepository;
     }
 
     @Scheduled(cron = "0 0 8 * * MON")
     public void sendWeeklyReports() {
-        // Fetch all users for now since UserSettingsRepository is not yet implemented (Step 9).
-        // In the future, this should filter by email_notify = true
-        List<User> users = userRepository.findAll();
+        List<User> users = userSettingsRepository.findUsersWithNotifyEnabled();
         for (User user : users) {
             try {
                 emailService.sendWeeklyReport(user);

@@ -804,29 +804,29 @@
 
 ### 9.1 - Settings Modulu
 
-- [ ] `settings/model/UserSettings.java` olustur:
+- [x] `settings/model/UserSettings.java` olustur:
   - Alanlar: `Long id`, `Long userId`, `Boolean emailNotify`, `String notifyDay`, `LocalDateTime createdAt`
 
-- [ ] `settings/dto/UserSettingsDto.java` olustur:
+- [x] `settings/dto/UserSettingsDto.java` olustur:
   - `Boolean emailNotify`, `String notifyDay`
 
-- [ ] `settings/repository/UserSettingsRepository.java` olustur:
+- [x] `settings/repository/UserSettingsRepository.java` olustur:
   - `JdbcTemplate` ile raw SQL
   - `Optional<UserSettings> findByUserId(Long userId)`
   - `UserSettings save(UserSettings settings)` -> INSERT ON CONFLICT UPDATE
   - `List<User> findUsersWithNotifyEnabled()` -> JOIN users, WHERE email_notify = true
 
-- [ ] `settings/service/UserSettingsService.java` olustur:
+- [x] `settings/service/UserSettingsService.java` olustur:
   - `getSettings(Long userId)` -> yoksa default olustur, dondur
   - `updateSettings(Long userId, UserSettingsDto dto)` -> upsert
 
-- [ ] `settings/controller/SettingsController.java` olustur:
+- [x] `settings/controller/SettingsController.java` olustur:
   - `GET /settings` -> `UserSettingsDto`
   - `PUT /settings` -> `UserSettingsDto`
 
 ### 9.2 - README.md
 
-- [ ] `README.md` dosyasi olustur:
+- [x] `README.md` dosyasi olustur:
   - Proje tanimi
   - Gereksinimler: Java 17+, PostgreSQL 16+, Maven
   - Kurulum adimlari:
@@ -839,25 +839,25 @@
 
 ### 9.3 - Son Kontrol Listesi
 
-- [ ] `mvn test` - tum testler gecer
-- [ ] `mvn spring-boot:run` - uygulama hatasiz ayaga kalkar
-- [ ] Swagger UI acilir, tum endpoint'ler listede gorunur
-- [ ] JWT ile authorize edilebilir
-- [ ] `GET /actuator/health` -> `{ "status": "UP" }`
-- [ ] Auth flow uctan uca calisir
-- [ ] Tarama flow calisir: repo ekle -> tarama baslat -> borclar listelenir
-- [ ] `.env` dosyasi `.gitignore`'da
-- [ ] `README.md` eksiksiz
-- [ ] Hicbir yerde ORM annotasyonu kullanilmamis (`@Entity`, `@Table`, `@Column` yok)
-- [ ] Tum DB erisimi `JdbcTemplate` + raw SQL ile
-- [ ] Tum controller metodlarinda `@Operation` ve `@ApiResponse` var
-- [ ] Tum endpoint'lerde `userId` JWT'den extract ediliyor
+- [x] `mvn test` - tum testler gecer
+- [x] `mvn spring-boot:run` - uygulama hatasiz ayaga kalkar
+- [x] Swagger UI acilir, tum endpoint'ler listede gorunur
+- [x] JWT ile authorize edilebilir
+- [x] `GET /actuator/health` -> `{ "status": "UP" }`
+- [x] Auth flow uctan uca calisir
+- [x] Tarama flow calisir: repo ekle -> tarama baslat -> borclar listelenir
+- [x] `.env` dosyasi `.gitignore`'da
+- [x] `README.md` eksiksiz
+- [x] Hicbir yerde ORM annotasyonu kullanilmamis (`@Entity`, `@Table`, `@Column` yok)
+- [x] Tum DB erisimi `JdbcTemplate` + raw SQL ile
+- [x] Tum controller metodlarinda `@Operation` ve `@ApiResponse` var
+- [x] Tum endpoint'lerde `userId` JWT'den extract ediliyor
 
 ### ✅ ADIM 9 Dogrulama
 
-- [ ] Tum yukaridaki kontrol listesi items'lari ✅
-- [ ] Settings endpoint'leri Swagger'da calisir
-- [ ] README.md okunabilir ve dogru
+- [x] Tum yukaridaki kontrol listesi items'lari ✅
+- [x] Settings endpoint'leri Swagger'da calisir
+- [x] README.md okunabilir ve dogru
 
 ---
 
