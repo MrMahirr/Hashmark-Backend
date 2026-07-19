@@ -1,18 +1,21 @@
 package dev.hashmark.scanner.service;
 
+import dev.hashmark.common.exception.ApiException;
+import dev.hashmark.scanner.dto.GitHubContentResponse;
+import dev.hashmark.scanner.dto.GitHubRepositoryMetadata;
+import dev.hashmark.scanner.dto.GitHubTreeItem;
+import dev.hashmark.scanner.dto.GitHubTreeResponse;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -30,30 +33,43 @@ public class GitHubFileService {
     }
 
     public List<String> listRepoFiles(String repoFullName, String githubToken) {
-        String url = "https://api.github.com/repos/" + repoFullName + "/git/trees/main?recursive=1";
-        
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + githubToken);
-        headers.set("Accept", "application/vnd.github.v3+json");
+        HttpEntity<Void> request = new HttpEntity<>(buildGitHubHeaders(githubToken));
+        String defaultBranch = fetchDefaultBranch(repoFullName, request);
+        String url = "https://api.github.com/repos/" + repoFullName + "/git/trees/" + defaultBranch + "?recursive=1";
 
-        HttpEntity<Void> request = new HttpEntity<>(headers);
+        ResponseEntity<GitHubTreeResponse> response = restTemplate.exchange(
+                url,
+                HttpMethod.GET,
+                request,
+                new ParameterizedTypeReference<>() {}
+        );
 
-        ResponseEntity<Map<String, Object>> response;
-        try {
-            response = restTemplate.exchange(url, HttpMethod.GET, request, new ParameterizedTypeReference<Map<String, Object>>() {});
-        } catch (HttpClientErrorException.NotFound e) {
-            // Fallback to master
-            String masterUrl = "https://api.github.com/repos/" + repoFullName + "/git/trees/master?recursive=1";
-            response = restTemplate.exchange(masterUrl, HttpMethod.GET, request, new ParameterizedTypeReference<Map<String, Object>>() {});
+        GitHubTreeResponse body = response.getBody();
+        if (body == null || body.getTree() == null) {
+            return List.of();
         }
-
-        List<Map<String, Object>> tree = (List<Map<String, Object>>) response.getBody().get("tree");
         
-        return tree.stream()
-                .filter(item -> "blob".equals(item.get("type")))
-                .map(item -> (String) item.get("path"))
+        return body.getTree().stream()
+                .filter(item -> "blob".equals(item.getType()))
+                .map(GitHubTreeItem::getPath)
                 .filter(this::hasSupportedExtension)
                 .collect(Collectors.toList());
+    }
+
+    private String fetchDefaultBranch(String repoFullName, HttpEntity<Void> request) {
+        String url = "https://api.github.com/repos/" + repoFullName;
+        ResponseEntity<GitHubRepositoryMetadata> response = restTemplate.exchange(
+                url,
+                HttpMethod.GET,
+                request,
+                GitHubRepositoryMetadata.class
+        );
+
+        GitHubRepositoryMetadata metadata = response.getBody();
+        if (metadata == null || metadata.getDefaultBranch() == null || metadata.getDefaultBranch().isBlank()) {
+            throw ApiException.badRequest("GitHub repository default branch could not be determined");
+        }
+        return metadata.getDefaultBranch();
     }
 
     private boolean hasSupportedExtension(String path) {
@@ -67,26 +83,30 @@ public class GitHubFileService {
     public String getFileContent(String repoFullName, String filePath, String githubToken) {
         String url = "https://api.github.com/repos/" + repoFullName + "/contents/" + filePath;
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + githubToken);
-        headers.set("Accept", "application/vnd.github.v3+json");
+        HttpEntity<Void> request = new HttpEntity<>(buildGitHubHeaders(githubToken));
 
-        HttpEntity<Void> request = new HttpEntity<>(headers);
-
-        ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+        ResponseEntity<GitHubContentResponse> response = restTemplate.exchange(
                 url,
                 HttpMethod.GET,
                 request,
-                new ParameterizedTypeReference<Map<String, Object>>() {}
+                GitHubContentResponse.class
         );
 
-        String contentBase64 = (String) response.getBody().get("content");
+        GitHubContentResponse body = response.getBody();
+        String contentBase64 = body != null ? body.getContent() : null;
         if (contentBase64 == null) {
             return "";
         }
         
-        contentBase64 = contentBase64.replaceAll("\\r|\\n", "");
+        contentBase64 = contentBase64.replace("\r", "").replace("\n", "");
         byte[] decodedBytes = Base64.getDecoder().decode(contentBase64);
         return new String(decodedBytes, StandardCharsets.UTF_8);
+    }
+
+    private HttpHeaders buildGitHubHeaders(String githubToken) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer " + githubToken);
+        headers.set("Accept", "application/vnd.github.v3+json");
+        return headers;
     }
 }

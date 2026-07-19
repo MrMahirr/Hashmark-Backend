@@ -2,6 +2,8 @@ package dev.hashmark.report.service;
 
 import dev.hashmark.auth.model.User;
 import dev.hashmark.report.dto.SummaryResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -14,6 +16,9 @@ import java.util.Map;
 
 @Service
 public class EmailService {
+
+    private static final Logger log = LoggerFactory.getLogger(EmailService.class);
+    private static final String WEEKLY_REPORT_SUBJECT = "Hashmark Weekly Report";
 
     @Value("${resend.api-key:placeholder}")
     private String resendApiKey;
@@ -54,7 +59,7 @@ public class EmailService {
                 topModuleHtml +
                 "</body></html>";
 
-        sendEmail(user.getEmail(), "Hashmark Weekly Report", htmlContent);
+        sendEmail(user.getEmail(), htmlContent);
     }
 
     public void sendTestEmail(Long userId, User user) {
@@ -64,9 +69,9 @@ public class EmailService {
         sendWeeklyReport(user);
     }
 
-    private void sendEmail(String to, String subject, String html) {
+    private void sendEmail(String to, String html) {
         if ("placeholder".equals(resendApiKey) || resendApiKey == null || resendApiKey.isEmpty()) {
-            System.out.println("Mock sending email to: " + to + " with subject: " + subject);
+            log.info("Skipping email send because Resend API key is not configured. to={}, subject={}", to, WEEKLY_REPORT_SUBJECT);
             return;
         }
 
@@ -78,15 +83,15 @@ public class EmailService {
         Map<String, Object> body = new HashMap<>();
         body.put("from", fromEmail);
         body.put("to", new String[]{to});
-        body.put("subject", subject);
+        body.put("subject", WEEKLY_REPORT_SUBJECT);
         body.put("html", html);
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
         try {
             restTemplate.postForEntity(url, request, String.class);
-            System.out.println("Email sent successfully to " + to);
+            log.info("Email sent successfully. to={}", to);
         } catch (Exception e) {
-            System.err.println("Failed to send email to " + to + ": " + e.getMessage());
+            log.error("Failed to send email. to={}", to, e);
         }
     }
 }

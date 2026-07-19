@@ -33,9 +33,10 @@ public class GitHubRepoService {
                 url,
                 HttpMethod.GET,
                 request,
-                new ParameterizedTypeReference<List<GitHubRepoDto>>() {}
+                new ParameterizedTypeReference<>() {}
         );
 
-        return response.getBody();
+        List<GitHubRepoDto> body = response.getBody();
+        return body != null ? body : List.of();
     }
 }

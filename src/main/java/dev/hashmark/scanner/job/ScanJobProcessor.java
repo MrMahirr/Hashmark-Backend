@@ -2,13 +2,13 @@ package dev.hashmark.scanner.job;
 
 import dev.hashmark.auth.model.User;
 import dev.hashmark.auth.repository.UserRepository;
+import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.common.util.AesEncryptionUtil;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
-import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
@@ -47,9 +47,9 @@ public class ScanJobProcessor {
     @Async("taskExecutor")
     public void processScan(Long repoId, Long userId, Long jobId) {
         try {
-            User user = userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
+            User user = userRepository.findById(userId).orElseThrow(() -> ApiException.unauthorized("User not found"));
             String plainToken = aesEncryptionUtil.decrypt(user.getGithubToken());
-            Repo repo = repoRepository.findByIdAndUserId(repoId, userId).orElseThrow(() -> new RuntimeException("Repo not found"));
+            Repo repo = repoRepository.findByIdAndUserId(repoId, userId).orElseThrow(() -> ApiException.notFound("Repo not found"));
 
             List<String> filePaths = gitHubFileService.listRepoFiles(repo.getFullName(), plainToken);
 

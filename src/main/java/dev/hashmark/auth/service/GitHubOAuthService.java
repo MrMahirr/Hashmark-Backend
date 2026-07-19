@@ -1,6 +1,8 @@
 package dev.hashmark.auth.service;
 
+import dev.hashmark.auth.dto.GitHubTokenResponse;
 import dev.hashmark.auth.dto.GitHubUserDto;
+import dev.hashmark.common.exception.ApiException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -44,22 +46,26 @@ public class GitHubOAuthService {
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/json");
 
-        Map<String, String> body = Map.of(
+        Map<String, String> requestBody = Map.of(
                 "client_id", clientId,
                 "client_secret", clientSecret,
                 "code", code,
                 "redirect_uri", callbackUrl
         );
 
-        HttpEntity<Map<String, String>> request = new HttpEntity<>(body, headers);
+        HttpEntity<Map<String, String>> request = new HttpEntity<>(requestBody, headers);
         
-        ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
-        
-        if (response.getBody() != null && response.getBody().containsKey("access_token")) {
-            return (String) response.getBody().get("access_token");
+        ResponseEntity<GitHubTokenResponse> response = restTemplate.postForEntity(url, request, GitHubTokenResponse.class);
+        GitHubTokenResponse responseBody = response.getBody();
+
+        if (responseBody != null && responseBody.getAccessToken() != null && !responseBody.getAccessToken().isBlank()) {
+            return responseBody.getAccessToken();
         }
-        
-        throw new RuntimeException("Failed to exchange code for token: " + response.getBody());
+
+        String message = responseBody != null && responseBody.getErrorDescription() != null
+                ? responseBody.getErrorDescription()
+                : "Failed to exchange GitHub authorization code";
+        throw ApiException.unauthorized(message);
     }
 
     public GitHubUserDto fetchUserInfo(String accessToken) {
@@ -71,7 +77,10 @@ public class GitHubOAuthService {
         HttpEntity<Void> request = new HttpEntity<>(headers);
 
         ResponseEntity<GitHubUserDto> response = restTemplate.exchange(url, HttpMethod.GET, request, GitHubUserDto.class);
-
-        return response.getBody();
+        GitHubUserDto body = response.getBody();
+        if (body == null) {
+            throw ApiException.unauthorized("GitHub user response was empty");
+        }
+        return body;
     }
 }

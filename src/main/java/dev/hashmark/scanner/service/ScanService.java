@@ -3,13 +3,11 @@ package dev.hashmark.scanner.service;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.scanner.dto.ScanStartResponse;
 import dev.hashmark.scanner.job.ScanJobProcessor;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import org.springframework.stereotype.Service;
-
-import java.util.HashMap;
-import java.util.Map;
 
 @Service
 public class ScanService {
@@ -24,7 +22,7 @@ public class ScanService {
         this.scanJobRepository = scanJobRepository;
     }
 
-    public Map<String, Object> startScan(Long repoId, Long userId) {
+    public ScanStartResponse startScan(Long repoId, Long userId) {
         Repo repo = repoRepository.findByIdAndUserId(repoId, userId)
                 .orElseThrow(() -> ApiException.notFound("Repo not found or not owned by user"));
 
@@ -35,11 +33,11 @@ public class ScanService {
 
         scanJobProcessor.processScan(repoId, userId, savedJob.getId());
 
-        Map<String, Object> response = new HashMap<>();
-        response.put("repoId", repoId);
-        response.put("jobId", savedJob.getId());
-        response.put("status", "RUNNING");
-        return response;
+        return ScanStartResponse.builder()
+                .repoId(repo.getId())
+                .jobId(savedJob.getId())
+                .status("RUNNING")
+                .build();
     }
 
     public ScanJob getScanStatus(Long repoId, Long userId) {

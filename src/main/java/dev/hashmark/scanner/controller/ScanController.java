@@ -1,5 +1,6 @@
 package dev.hashmark.scanner.controller;
 
+import dev.hashmark.scanner.dto.ScanStartResponse;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.service.ScanService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -8,8 +9,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.Map;
 
 @RestController
 @RequestMapping("/scan")
@@ -25,8 +24,8 @@ public class ScanController {
 
     @PostMapping("/{repoId}")
     @Operation(summary = "Manuel tarama baslat")
-    public ResponseEntity<Map<String, Object>> startScan(@AuthenticationPrincipal Long userId, @PathVariable Long repoId) {
-        Map<String, Object> result = scanService.startScan(repoId, userId);
+    public ResponseEntity<ScanStartResponse> startScan(@AuthenticationPrincipal Long userId, @PathVariable Long repoId) {
+        ScanStartResponse result = scanService.startScan(repoId, userId);
         return ResponseEntity.accepted().body(result);
     }
 
