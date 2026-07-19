@@ -35,8 +35,19 @@ Hashmark is a developer tooling platform that scans GitHub repositories for `TOD
    | `RESEND_API_KEY` | Resend API Key for email sending |
    | `RESEND_FROM_EMAIL` | Sender email address (e.g., `noreply@hashmark.dev`) |
 
-3. **Running Locally**
-   You can run the application directly with Maven:
+3. **Running Locally (with Docker Compose)**
+   The easiest way to start both the PostgreSQL database and the backend application is using Docker Compose. Make sure you have filled in your `.env` file first.
+   ```bash
+   docker-compose up --build -d
+   ```
+
+   To view logs:
+   ```bash
+   docker-compose logs -f backend
+   ```
+
+4. **Running Locally (Manual)**
+   If you prefer to run the application directly without Docker, ensure your PostgreSQL database is running, then use Maven:
    ```bash
    mvn spring-boot:run
    ```
