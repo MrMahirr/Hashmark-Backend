@@ -89,7 +89,7 @@ public class ReportRepository {
         }
         sql.append(" GROUP BY label");
 
-        LabelStats stats = new LabelStats(0, 0, 0, 0);
+        LabelStats stats = new LabelStats(0, 0, 0, 0, 0, 0, 0);
         jdbcTemplate.query(sql.toString(), (rs) -> {
             String label = rs.getString("label");
             int count = rs.getInt("cnt");
@@ -99,6 +99,9 @@ public class ReportRepository {
                 case "FIXME": stats.setFixmeCount(count); break;
                 case "HACK": stats.setHackCount(count); break;
                 case "XXX": stats.setXxxCount(count); break;
+                case "NOTE": stats.setNoteCount(count); break;
+                case "DOC": stats.setDocCount(count); break;
+                case "INFO": stats.setInfoCount(count); break;
             }
         }, params.toArray());
         
