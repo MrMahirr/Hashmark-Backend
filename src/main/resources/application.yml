@@ -1,0 +1,42 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v1/api-docs
+
+github:
+  client-id: ${GITHUB_CLIENT_ID}
+  client-secret: ${GITHUB_CLIENT_SECRET}
+  callback-url: ${GITHUB_CALLBACK_URL:http://localhost:3000/auth/callback}
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-expiry: 900000
+  refresh-token-expiry: 604800000
+
+encryption:
+  secret: ${ENCRYPTION_SECRET}
+
+resend:
+  api-key: ${RESEND_API_KEY:placeholder}
+  from-email: ${RESEND_FROM_EMAIL:noreply@hashmark.dev}
+
+async:
+  core-pool-size: 2
+  max-pool-size: 5
+  queue-capacity: 50
