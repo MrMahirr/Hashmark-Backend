@@ -35,3 +35,14 @@ build/
 ### Environment Variables ###
 .env*
 !.env.example
+
+### SSL Certificates ###
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+
+### Certbot ###
+nginx/certbot/
+
+### Backups ###
+backups/

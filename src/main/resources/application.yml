@@ -22,7 +22,7 @@ springdoc:
 github:
   client-id: ${GITHUB_CLIENT_ID}
   client-secret: ${GITHUB_CLIENT_SECRET}
-  callback-url: http://localhost:3000/auth/callback
+  callback-url: ${GITHUB_CALLBACK_URL:http://localhost:3000/auth/callback}
 
 jwt:
   secret: ${JWT_SECRET}
