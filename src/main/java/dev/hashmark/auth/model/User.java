@@ -16,6 +16,8 @@ public class User {
     private String githubId;
     private String email;
     private String name;
+    private String avatarUrl;
+    private String githubLogin;
     private String githubToken;
     private LocalDateTime createdAt;
 }

@@ -47,6 +47,8 @@ public class AuthService {
                 .githubId(userDto.getId())
                 .email(userDto.getEmail())
                 .name(userDto.getName() != null ? userDto.getName() : userDto.getLogin())
+                .avatarUrl(userDto.getAvatarUrl())
+                .githubLogin(userDto.getLogin())
                 .githubToken(encryptedToken)
                 .build();
 

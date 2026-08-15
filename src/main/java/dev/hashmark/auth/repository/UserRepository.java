@@ -22,6 +22,8 @@ public class UserRepository {
             .githubId(rs.getString("github_id"))
             .email(rs.getString("email"))
             .name(rs.getString("name"))
+            .avatarUrl(rs.getString("avatar_url"))
+            .githubLogin(rs.getString("github_login"))
             .githubToken(rs.getString("github_token"))
             .createdAt(rs.getTimestamp("created_at").toLocalDateTime())
             .build();
@@ -42,10 +44,12 @@ public class UserRepository {
     }
 
     public User save(User user) {
-        String sql = "INSERT INTO users (github_id, email, name, github_token) " +
-                     "VALUES (?, ?, ?, ?) " +
+        String sql = "INSERT INTO users (github_id, email, name, avatar_url, github_login, github_token) " +
+                     "VALUES (?, ?, ?, ?, ?, ?) " +
                      "ON CONFLICT (github_id) DO UPDATE " +
-                     "SET email = EXCLUDED.email, name = EXCLUDED.name, github_token = EXCLUDED.github_token " +
+                     "SET email = EXCLUDED.email, name = EXCLUDED.name, " +
+                     "avatar_url = EXCLUDED.avatar_url, github_login = EXCLUDED.github_login, " +
+                     "github_token = EXCLUDED.github_token " +
                      "RETURNING *";
                      
         return jdbcTemplate.queryForObject(
@@ -54,6 +58,8 @@ public class UserRepository {
                 user.getGithubId(),
                 user.getEmail(),
                 user.getName(),
+                user.getAvatarUrl(),
+                user.getGithubLogin(),
                 user.getGithubToken()
         );
     }

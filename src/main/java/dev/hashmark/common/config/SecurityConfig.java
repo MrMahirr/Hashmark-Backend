@@ -29,6 +29,9 @@ public class SecurityConfig {
                 .requestMatchers("/auth/**", "/swagger-ui/**", "/swagger-ui.html", "/v1/api-docs/**", "/actuator/health").permitAll()
                 .anyRequest().authenticated()
             )
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint((request, response, authException) -> response.sendError(401, "Unauthorized"))
+            )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
