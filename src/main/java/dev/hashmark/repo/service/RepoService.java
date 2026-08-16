@@ -48,13 +48,13 @@ public class RepoService {
     }
 
     public List<RepoDto> getUserRepos(Long userId) {
-        return repoRepository.findAllByUserId(userId).stream()
+        return repoRepository.findAllByUserIdWithDebtCount(userId).stream()
                 .map(this::mapToDto)
                 .collect(Collectors.toList());
     }
 
     public RepoDto getRepo(Long userId, Long repoId) {
-        Repo repo = repoRepository.findByIdAndUserId(repoId, userId)
+        Repo repo = repoRepository.findByIdAndUserIdWithDebtCount(repoId, userId)
                 .orElseThrow(() -> ApiException.notFound("Repo not found"));
         return mapToDto(repo);
     }
@@ -72,6 +72,7 @@ public class RepoService {
                 .isPrivate(repo.getIsPrivate())
                 .lastScannedAt(repo.getLastScannedAt())
                 .createdAt(repo.getCreatedAt())
+                .debtCount(repo.getDebtCount())
                 .build();
     }
 }
