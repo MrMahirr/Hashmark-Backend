@@ -19,4 +19,7 @@ public class Repo {
     private Boolean isPrivate;
     private LocalDateTime lastScannedAt;
     private LocalDateTime createdAt;
+    
+    // Transient / calculated field
+    private Integer debtCount;
 }

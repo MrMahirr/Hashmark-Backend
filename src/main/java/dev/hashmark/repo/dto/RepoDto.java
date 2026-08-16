@@ -19,4 +19,5 @@ public class RepoDto {
     private Boolean isPrivate;
     private LocalDateTime lastScannedAt;
     private LocalDateTime createdAt;
+    private Integer debtCount;
 }
