@@ -3,6 +3,7 @@ package dev.hashmark.report.service;
 import dev.hashmark.auth.model.User;
 import dev.hashmark.auth.repository.UserRepository;
 import dev.hashmark.common.mail.EmailSender;
+import dev.hashmark.common.mail.EmailTemplateEngine;
 import dev.hashmark.report.dto.LabelStats;
 import dev.hashmark.report.dto.ModuleDebtInfo;
 import dev.hashmark.report.dto.SummaryResponse;
@@ -37,8 +38,8 @@ class EmailServiceTest {
     void setUp() {
         sender = mock(EmailSender.class);
         reports = mock(ReportService.class);
-        service = new EmailService(sender, reports, mock(UserRepository.class), mock(UserSettingsService.class),
-                "https://app.example.com/");
+        service = new EmailService(sender, new EmailTemplateEngine(), reports, mock(UserRepository.class),
+                mock(UserSettingsService.class), "https://app.example.com/", "tr");
         SummaryResponse summary = SummaryResponse.builder()
                 .trendData(new ArrayList<>())
                 .labelStats(LabelStats.builder().todoCount(4).fixmeCount(2).hackCount(1).noteCount(10).build())
@@ -92,6 +93,24 @@ class EmailServiceTest {
 
         assertFalse(service.sendWeeklyReport(noMail, UserSettings.builder().userId(7L).build()));
         verify(sender, never()).send(anyString(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void rendersBrandedTurkishLayoutWithLabelBars() {
+        UserSettings settings = UserSettings.builder().userId(7L).build();
+
+        service.sendWeeklyReport(user, settings);
+
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(sender).send(anyString(), any(), subject.capture(), html.capture());
+        assertEquals("Hashmark · haftalık borç özetiniz", subject.getValue());
+        String body = html.getValue();
+        assertTrue(body.contains("lang=\"tr\""));
+        assertTrue(body.contains("hashmark</td>"), "marka bandı");
+        assertTrue(body.contains("#CDF24A"), "limon vurgu");
+        assertTrue(body.contains("Etikete göre"));
+        assertFalse(body.contains("{{"), "çözümlenmemiş işaretçi kalmamalı");
     }
 
     @Test

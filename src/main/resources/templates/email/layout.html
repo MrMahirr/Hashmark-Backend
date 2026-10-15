@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="{{lang}}" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>{{title}}</title>
+<style>
+  body { margin:0; padding:0; }
+  a { color:#326500; }
+  @media (max-width:620px) {
+    .hm-wrap { padding:12px !important; }
+    .hm-pad { padding-left:20px !important; padding-right:20px !important; }
+    .hm-kpi { font-size:48px !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .hm-body { background:#0D1110 !important; }
+    .hm-card { background:#141A18 !important; border-color:#26312D !important; }
+    .hm-text { color:#E9EEE8 !important; }
+    .hm-mute { color:#9AA9A2 !important; }
+    .hm-line { border-color:#26312D !important; }
+    .hm-track { background:#26312D !important; }
+    .hm-btn { background:#CDF24A !important; color:#0D1110 !important; border-color:#33423C !important; }
+    .hm-link { color:#CDF24A !important; }
+    .hm-btn a { color:#0D1110 !important; }
+    .hm-t-todo { color:#7DB7FF !important; }
+    .hm-b-todo { background:#7DB7FF !important; }
+    .hm-t-fixme { color:#FF8F70 !important; }
+    .hm-b-fixme { background:#FF8F70 !important; }
+    .hm-t-hack { color:#FFC857 !important; }
+    .hm-b-hack { background:#FFC857 !important; }
+    .hm-t-xxx { color:#C9A2FF !important; }
+    .hm-b-xxx { background:#C9A2FF !important; }
+    .hm-t-note { color:#5FD6C2 !important; }
+    .hm-b-note { background:#5FD6C2 !important; }
+    .hm-t-doc { color:#A3A8FF !important; }
+    .hm-b-doc { background:#A3A8FF !important; }
+    .hm-t-info { color:#6FD0F0 !important; }
+    .hm-b-info { background:#6FD0F0 !important; }
+  }
+</style>
+</head>
+<body class="hm-body" style="margin:0;padding:0;background:#EEF0EA;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">{{preheader}}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="hm-body" style="background:#EEF0EA;">
+  <tr><td align="center" class="hm-wrap" style="padding:32px 16px;">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="hm-card" style="width:100%;max-width:600px;background:#F9FAF7;border:1px solid #D2D8CF;border-radius:18px;overflow:hidden;">
+
+      <!-- üst bant: tally logosu + yazı işareti -->
+      <tr><td style="background:#0D1110;padding:22px 32px;" class="hm-pad">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td valign="middle" style="padding-right:14px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" aria-hidden="true"><tr>
+              <td width="3" height="24" style="width:3px;height:24px;background:#E9EEE8;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td><td width="5" style="width:5px;font-size:0;">&nbsp;</td>
+              <td width="3" height="24" style="width:3px;height:24px;background:#E9EEE8;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td><td width="5" style="width:5px;font-size:0;">&nbsp;</td>
+              <td width="3" height="24" style="width:3px;height:24px;background:#E9EEE8;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td><td width="5" style="width:5px;font-size:0;">&nbsp;</td>
+              <td width="3" height="24" style="width:3px;height:24px;background:#CDF24A;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td>
+            </tr></table>
+          </td>
+          <td valign="middle" style="font-family:Georgia,'Times New Roman',serif;font-size:28px;line-height:28px;color:#E9EEE8;letter-spacing:-0.01em;">hashmark</td>
+        </tr></table>
+      </td></tr>
+      <tr><td height="4" style="height:4px;background:#CDF24A;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+      <!-- içerik -->
+      {{{content}}}
+
+      <!-- alt bilgi -->
+      <tr><td class="hm-pad hm-line" style="padding:20px 32px 28px;border-top:1px solid #D2D8CF;">
+        <p class="hm-mute" style="margin:0;font-family:'Courier New',Courier,monospace;font-size:12px;line-height:18px;color:#525C55;">{{footer}}</p>
+        <p class="hm-mute" style="margin:8px 0 0;font-family:'Courier New',Courier,monospace;font-size:12px;line-height:18px;color:#525C55;"><a href="{{appUrl}}/dashboard/settings" class="hm-link" style="color:#326500;">{{settingsLink}}</a></p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>
