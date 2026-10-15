@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Data
@@ -21,4 +22,11 @@ public class DebtDto {
     private String content;
     private LocalDateTime detectedAt;
     private LocalDateTime resolvedAt;
+
+    // Parser'ın etiketten çıkardığı üst veriler (TODO(mahir): ..., FIXME[P1], TODO 2026-12-01).
+    // Henüz veritabanında saklanmıyor; yalnızca tarama sırasında doldurulur.
+    private String assignee;
+    private String priority;
+    private LocalDate dueDate;
+    private String issueRef;
 }
