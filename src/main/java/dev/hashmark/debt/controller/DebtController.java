@@ -3,11 +3,17 @@ package dev.hashmark.debt.controller;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.dto.DebtFilterRequest;
 import dev.hashmark.debt.dto.DebtStatsDto;
+import dev.hashmark.debt.dto.DebtTriageRequest;
 import dev.hashmark.debt.dto.PageResponse;
+import dev.hashmark.debt.service.DebtExportService.ExportFile;
 import dev.hashmark.debt.service.DebtService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,22 +30,8 @@ public class DebtController {
     }
 
     @GetMapping
-    @Operation(summary = "Borclari listele (filtreli, sayfali)")
-    public PageResponse<DebtDto> listDebts(
-            @AuthenticationPrincipal Long userId,
-            @RequestParam(required = false) Long repoId,
-            @RequestParam(required = false) String label,
-            @RequestParam(required = false) String status,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
-    ) {
-        DebtFilterRequest filter = DebtFilterRequest.builder()
-                .repoId(repoId)
-                .label(label)
-                .status(status)
-                .page(page)
-                .size(size)
-                .build();
+    @Operation(summary = "Borclari listele (filtreli, aramali, siralamali, sayfali; size en fazla 100)")
+    public PageResponse<DebtDto> listDebts(@AuthenticationPrincipal Long userId, DebtFilterRequest filter) {
         return debtService.listDebts(userId, filter);
     }
 
@@ -50,5 +42,30 @@ public class DebtController {
             @RequestParam(required = false) Long repoId
     ) {
         return debtService.getStats(userId, repoId);
+    }
+
+    @GetMapping("/export")
+    @Operation(summary = "Borclari disa aktar (format: csv | json | sarif; ayni filtreler, en fazla 50.000 kayit)")
+    public ResponseEntity<byte[]> export(
+            @AuthenticationPrincipal Long userId,
+            DebtFilterRequest filter,
+            @RequestParam(defaultValue = "csv") String format
+    ) {
+        ExportFile file = debtService.export(userId, filter, format);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(file.filename()).build().toString())
+                .body(file.content());
+    }
+
+    @PatchMapping("/{id}")
+    @Operation(summary = "Borcu yok say / won't fix / yeniden ac ve kisiye ata")
+    public DebtDto triage(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id,
+            @RequestBody DebtTriageRequest request
+    ) {
+        return debtService.triage(userId, id, request);
     }
 }

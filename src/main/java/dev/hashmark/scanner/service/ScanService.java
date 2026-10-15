@@ -4,39 +4,39 @@ import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.dto.ScanStartResponse;
-import dev.hashmark.scanner.job.ScanJobProcessor;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ScanService {
 
     private final RepoRepository repoRepository;
-    private final ScanJobProcessor scanJobProcessor;
     private final ScanJobRepository scanJobRepository;
 
-    public ScanService(RepoRepository repoRepository, ScanJobProcessor scanJobProcessor, ScanJobRepository scanJobRepository) {
+    public ScanService(RepoRepository repoRepository, ScanJobRepository scanJobRepository) {
         this.repoRepository = repoRepository;
-        this.scanJobProcessor = scanJobProcessor;
         this.scanJobRepository = scanJobRepository;
     }
 
+    /** İşi kalıcı kuyruğa ekler; çalıştırmayı {@code ScanJobDispatcher} üstlenir. */
     public ScanStartResponse startScan(Long repoId, Long userId) {
         Repo repo = repoRepository.findByIdAndUserId(repoId, userId)
                 .orElseThrow(() -> ApiException.notFound("Repo not found or not owned by user"));
 
-        ScanJob job = ScanJob.builder()
-                .repoId(repoId)
-                .build();
-        ScanJob savedJob = scanJobRepository.save(job);
-
-        scanJobProcessor.processScan(repoId, userId, savedJob.getId());
+        ScanJob job;
+        try {
+            // Benzersiz kısmi indeks (PENDING/RUNNING) eşzamanlı taramayı atomik olarak engeller
+            job = scanJobRepository.enqueue(repoId, userId, repo.getTrackedBranch());
+        } catch (DuplicateKeyException e) {
+            throw ApiException.conflict("A scan is already queued or running for this repository");
+        }
 
         return ScanStartResponse.builder()
                 .repoId(repo.getId())
-                .jobId(savedJob.getId())
-                .status("RUNNING")
+                .jobId(job.getId())
+                .status(job.getStatus())
                 .build();
     }
 

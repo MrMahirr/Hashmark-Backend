@@ -20,4 +20,6 @@ public class RepoDto {
     private LocalDateTime lastScannedAt;
     private LocalDateTime createdAt;
     private Integer debtCount;
+    private String trackedBranch;
+    private String lastScannedSha;
 }

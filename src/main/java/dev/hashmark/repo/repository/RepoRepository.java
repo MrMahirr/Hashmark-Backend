@@ -26,6 +26,8 @@ public class RepoRepository {
             .isPrivate(rs.getBoolean("private"))
             .lastScannedAt(rs.getTimestamp("last_scanned_at") != null ? rs.getTimestamp("last_scanned_at").toLocalDateTime() : null)
             .createdAt(rs.getTimestamp("created_at").toLocalDateTime())
+            .trackedBranch(rs.getString("tracked_branch"))
+            .lastScannedSha(rs.getString("last_scanned_sha"))
             .build();
 
     public List<Repo> findAllByUserId(Long userId) {
@@ -34,7 +36,7 @@ public class RepoRepository {
     }
 
     public List<Repo> findAllByUserIdWithDebtCount(Long userId) {
-        String sql = "SELECT r.*, (SELECT COUNT(*) FROM debts d WHERE d.repo_id = r.id AND d.resolved_at IS NULL) as debt_count " +
+        String sql = "SELECT r.*, (SELECT COUNT(*) FROM debts d WHERE d.repo_id = r.id AND d.resolved_at IS NULL AND d.triage_status = 'OPEN') as debt_count " +
                      "FROM repos r WHERE r.user_id = ? ORDER BY r.full_name ASC";
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
             Repo repo = repoRowMapper.mapRow(rs, rowNum);
@@ -51,7 +53,7 @@ public class RepoRepository {
     }
 
     public Optional<Repo> findByIdAndUserIdWithDebtCount(Long id, Long userId) {
-        String sql = "SELECT r.*, (SELECT COUNT(*) FROM debts d WHERE d.repo_id = r.id AND d.resolved_at IS NULL) as debt_count " +
+        String sql = "SELECT r.*, (SELECT COUNT(*) FROM debts d WHERE d.repo_id = r.id AND d.resolved_at IS NULL AND d.triage_status = 'OPEN') as debt_count " +
                      "FROM repos r WHERE r.id = ? AND r.user_id = ?";
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
             Repo repo = repoRowMapper.mapRow(rs, rowNum);
@@ -87,5 +89,15 @@ public class RepoRepository {
     public void updateLastScannedAt(Long repoId, LocalDateTime time) {
         String sql = "UPDATE repos SET last_scanned_at = ? WHERE id = ?";
         jdbcTemplate.update(sql, time, repoId);
+    }
+
+    public void updateLastScannedSha(Long repoId, String sha) {
+        jdbcTemplate.update("UPDATE repos SET last_scanned_sha = ? WHERE id = ?", sha, repoId);
+    }
+
+    /** @param branch {@code null} = deponun varsayılan dalı */
+    public int updateTrackedBranch(Long id, Long userId, String branch) {
+        return jdbcTemplate.update("UPDATE repos SET tracked_branch = ? WHERE id = ? AND user_id = ?",
+                branch, id, userId);
     }
 }
