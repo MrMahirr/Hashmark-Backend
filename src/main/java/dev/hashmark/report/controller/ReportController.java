@@ -6,6 +6,7 @@ import dev.hashmark.report.service.ReportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import java.util.Map;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -33,8 +34,9 @@ public class ReportController {
 
     @PostMapping("/send-test")
     @Operation(summary = "Test e-postasi gonder")
-    public ResponseEntity<Void> sendTestEmail(@AuthenticationPrincipal Long userId) {
-        emailService.sendTestEmail(userId, null);
-        return ResponseEntity.ok().build();
+    public ResponseEntity<Map<String, Object>> sendTestEmail(@AuthenticationPrincipal Long userId) {
+        boolean configured = emailService.isConfigured();
+        boolean sent = configured && emailService.sendTestEmail(userId);
+        return ResponseEntity.ok(Map.of("configured", configured, "sent", sent));
     }
 }

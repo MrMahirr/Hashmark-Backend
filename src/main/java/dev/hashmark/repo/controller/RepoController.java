@@ -29,6 +29,18 @@ public class RepoController {
         return repoService.getUserRepos(userId);
     }
 
+    @GetMapping("/candidates")
+    @Operation(summary = "Senkronlanmis ama henuz izlenmeyen (aday) repolar")
+    public List<RepoDto> getCandidates(@AuthenticationPrincipal Long userId) {
+        return repoService.getCandidates(userId);
+    }
+
+    @PostMapping("/{id}/track")
+    @Operation(summary = "Aday repoyu izlemeye al")
+    public RepoDto trackRepo(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
+        return repoService.trackRepo(userId, id);
+    }
+
     @PostMapping("/sync")
     @Operation(summary = "GitHub'dan repolari senkronize et")
     public ResponseEntity<Void> syncRepos(@AuthenticationPrincipal Long userId) {

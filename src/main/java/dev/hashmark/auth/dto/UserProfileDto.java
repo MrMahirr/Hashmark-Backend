@@ -12,5 +12,7 @@ public class UserProfileDto {
     private String email;
     private String githubLogin;
     private String avatarUrl;
+    /** GitHub erişim jetonu kayıtlı mı (bağlantı kesildiyse false). */
+    private boolean githubConnected;
     private LocalDateTime createdAt;
 }

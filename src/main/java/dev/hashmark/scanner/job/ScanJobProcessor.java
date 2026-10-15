@@ -9,6 +9,7 @@ import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.dto.ReplaceResult;
 import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
+import dev.hashmark.notification.service.NotificationService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.model.ScanJob;
@@ -43,12 +44,13 @@ public class ScanJobProcessor {
     private final UserRepository userRepository;
     private final RepoRepository repoRepository;
     private final AesEncryptionUtil aesEncryptionUtil;
+    private final NotificationService notificationService;
 
     public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanSnapshotRepository scanSnapshotRepository,
                             GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
                             DebtParserService debtParserService, DebtRepository debtRepository,
                             UserRepository userRepository, RepoRepository repoRepository,
-                            AesEncryptionUtil aesEncryptionUtil) {
+                            AesEncryptionUtil aesEncryptionUtil, NotificationService notificationService) {
         this.scanJobRepository = scanJobRepository;
         this.scanSnapshotRepository = scanSnapshotRepository;
         this.gitHubFileService = gitHubFileService;
@@ -58,6 +60,7 @@ public class ScanJobProcessor {
         this.userRepository = userRepository;
         this.repoRepository = repoRepository;
         this.aesEncryptionUtil = aesEncryptionUtil;
+        this.notificationService = notificationService;
     }
 
     public void process(ScanJob job) {
@@ -70,6 +73,9 @@ public class ScanJobProcessor {
                 throw ApiException.badRequest("Scan job has no owner");
             }
             User user = userRepository.findById(userId).orElseThrow(() -> ApiException.unauthorized("User not found"));
+            if (user.getGithubToken() == null || user.getGithubToken().isBlank()) {
+                throw ApiException.badRequest("GitHub account is not connected");
+            }
             String plainToken = aesEncryptionUtil.decrypt(user.getGithubToken());
             Repo repo = repoRepository.findByIdAndUserId(repoId, userId).orElseThrow(() -> ApiException.notFound("Repo not found"));
 
@@ -99,14 +105,39 @@ public class ScanJobProcessor {
             }
 
             saveSnapshot(repoId, jobId, result.commitSha(), replaced);
+            notifyScanDone(userId, repo.getFullName(), replaced);
             enrichBlame(repoId, repo.getFullName(), plainToken, result.commitSha());
 
         } catch (ApiException e) {
             log.warn("Scan failed for repo {}: {}", repoId, e.getMessage());
             scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, e.getMessage());
+            notifyQuietly(userId, "Scan failed", e.getMessage(), "ERROR");
         } catch (Exception e) {
             log.error("Scan failed for repo: " + repoId, e);
             scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, "Unexpected error while scanning");
+            notifyQuietly(userId, "Scan failed", "Unexpected error while scanning", "ERROR");
+        }
+    }
+
+    private void notifyScanDone(Long userId, String repoName, ReplaceResult replaced) {
+        String description = repoName + ": " + replaced.openTotal() + " open, +" + replaced.added()
+                + " new, " + replaced.resolved() + " resolved";
+        notifyQuietly(userId, "Scan completed", description, "SUCCESS");
+        if (replaced.reopened() > 0) {
+            notifyQuietly(userId, "Debt reopened",
+                    repoName + ": " + replaced.reopened() + " item(s) marked resolved are still in the code", "WARNING");
+        }
+    }
+
+    /** Bildirim yazılamaması taramayı bozmamalı. */
+    private void notifyQuietly(Long userId, String title, String description, String type) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            notificationService.createNotification(userId, title, description, type);
+        } catch (Exception e) {
+            log.warn("Could not create notification for user {}: {}", userId, e.getMessage());
         }
     }
 

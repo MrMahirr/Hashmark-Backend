@@ -61,6 +61,7 @@ public class DebtRepository {
                 .content(rs.getString("content"))
                 .detectedAt(ts(rs.getTimestamp("detected_at")))
                 .resolvedAt(ts(rs.getTimestamp("resolved_at")))
+                .manuallyResolved(rs.getBoolean("manually_resolved"))
                 .commitSha(sha)
                 .permalink(PermalinkBuilder.build(repoFullName, sha, filePath, lineNo))
                 .fingerprint(rs.getString("fingerprint"))
@@ -98,13 +99,23 @@ public class DebtRepository {
         Timestamp scanTime = Timestamp.valueOf(LocalDateTime.now());
 
         int before = countActive(repoId);
+        int manualBefore = countManuallyResolved(repoId);
         upsertAll(repoId, debts, commitSha, scanTime);
+        // Elle "çözüldü" denmiş ama kod hâlâ duruyorsa upsert yeniden açmıştır
+        int reopened = Math.max(0, manualBefore - countManuallyResolved(repoId));
         int resolved = resolveUnseen(repoId, scanTime, onlyPaths, excludePaths);
         Map<String, Integer> byLabel = countActiveByLabel(repoId);
         int after = byLabel.values().stream().mapToInt(Integer::intValue).sum();
 
         int added = Math.max(0, after - before + resolved);
-        return new ReplaceResult(added, resolved, after, byLabel);
+        return new ReplaceResult(added, resolved, after, byLabel, reopened);
+    }
+
+    private int countManuallyResolved(Long repoId) {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM debts WHERE repo_id = ? AND manually_resolved AND resolved_at IS NOT NULL",
+                Integer.class, repoId);
+        return n == null ? 0 : n;
     }
 
     private void upsertAll(Long repoId, List<Debt> debts, String commitSha, Timestamp scanTime) {
@@ -127,6 +138,7 @@ public class DebtRepository {
                      "author_name = CASE WHEN debts.resolved_at IS NOT NULL THEN NULL ELSE debts.author_name END, " +
                      "introduced_at = CASE WHEN debts.resolved_at IS NOT NULL THEN NULL ELSE debts.introduced_at END, " +
                      "introduced_sha = CASE WHEN debts.resolved_at IS NOT NULL THEN NULL ELSE debts.introduced_sha END, " +
+                     "manually_resolved = FALSE, " +
                      "resolved_at = NULL";
 
         for (int from = 0; from < debts.size(); from += SAVE_BATCH_SIZE) {
@@ -263,9 +275,18 @@ public class DebtRepository {
     public Optional<DebtDto> updateTriage(Long userId, Long debtId, String status, String assignee) {
         StringBuilder set = new StringBuilder();
         List<Object> params = new ArrayList<>();
-        if (status != null) {
+        if ("RESOLVED".equals(status)) {
+            // Elle çözüldü: triyaj açık kalır, kayıt çözülmüş görünür
+            set.append("triage_status = 'OPEN', manually_resolved = (manually_resolved OR resolved_at IS NULL), ")
+               .append("resolved_at = COALESCE(resolved_at, NOW())");
+        } else if (status != null) {
             set.append("triage_status = ?");
             params.add(status);
+            if ("OPEN".equals(status)) {
+                // Yeniden aç: yalnızca elle çözülmüşse çözümü geri al
+                set.append(", resolved_at = CASE WHEN manually_resolved THEN NULL ELSE resolved_at END, ")
+                   .append("manually_resolved = FALSE");
+            }
         }
         if (assignee != null) {
             if (set.length() > 0) {

@@ -1,14 +1,30 @@
 package dev.hashmark.settings.service;
 
+import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.settings.dto.UserSettingsDto;
 import dev.hashmark.settings.model.UserSettings;
 import dev.hashmark.settings.repository.UserSettingsRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class UserSettingsService {
+
+    static final Set<String> LABELS = Set.of("TODO", "FIXME", "HACK", "XXX", "NOTE", "DOC", "INFO");
+    private static final Set<String> DAYS =
+            Set.of("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY");
+    private static final Map<String, String> DAY_ALIASES = Map.of(
+            "MON", "MONDAY", "TUE", "TUESDAY", "WED", "WEDNESDAY", "THU", "THURSDAY",
+            "FRI", "FRIDAY", "SAT", "SATURDAY", "SUN", "SUNDAY");
+    private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$");
+    private static final int MAX_EMAIL_LENGTH = 255;
 
     private final UserSettingsRepository userSettingsRepository;
 
@@ -18,28 +34,73 @@ public class UserSettingsService {
 
     public UserSettings getSettings(Long userId) {
         Optional<UserSettings> settingsOpt = userSettingsRepository.findByUserId(userId);
-        
+
         if (settingsOpt.isPresent()) {
             return settingsOpt.get();
         }
-        
-        // Return and save default settings
+
         UserSettings defaultSettings = UserSettings.builder()
                 .userId(userId)
                 .emailNotify(true)
-                .notifyDay("MON")
+                .notifyDay("MONDAY")
                 .build();
-                
+
         return userSettingsRepository.save(defaultSettings);
     }
 
+    /** Kısmi güncelleme: gönderilmeyen (null) alanlar değişmez. */
     public UserSettings updateSettings(Long userId, UserSettingsDto dto) {
-        UserSettings settings = UserSettings.builder()
-                .userId(userId)
-                .emailNotify(dto.getEmailNotify())
-                .notifyDay(dto.getNotifyDay())
-                .build();
-                
-        return userSettingsRepository.save(settings);
+        UserSettings current = getSettings(userId);
+
+        if (dto.getEmailNotify() != null) {
+            current.setEmailNotify(dto.getEmailNotify());
+        }
+        if (dto.getNotifyDay() != null) {
+            current.setNotifyDay(normalizeDay(dto.getNotifyDay()));
+        }
+        if (dto.getDigestLabels() != null) {
+            current.setDigestLabels(normalizeLabels(dto.getDigestLabels()));
+        }
+        if (dto.getDigestEmail() != null) {
+            current.setDigestEmail(normalizeEmail(dto.getDigestEmail()));
+        }
+        return userSettingsRepository.save(current);
+    }
+
+    static String normalizeDay(String raw) {
+        String value = raw.trim().toUpperCase(Locale.ROOT);
+        value = DAY_ALIASES.getOrDefault(value, value);
+        if (!DAYS.contains(value)) {
+            throw ApiException.badRequest("notifyDay must be one of " + String.join(", ", DAYS));
+        }
+        return value;
+    }
+
+    /** Boş liste ve "tüm etiketler" aynıdır → {@code null} (hepsi). */
+    static String normalizeLabels(List<String> labels) {
+        Set<String> out = new LinkedHashSet<>();
+        for (String label : labels) {
+            String value = label == null ? "" : label.trim().toUpperCase(Locale.ROOT);
+            if (!LABELS.contains(value)) {
+                throw ApiException.badRequest("Unknown label: " + label);
+            }
+            out.add(value);
+        }
+        if (out.isEmpty() || out.size() == LABELS.size()) {
+            return null;
+        }
+        return String.join(",", out);
+    }
+
+    /** Boş = GitHub e-postasını kullan ({@code null}). */
+    static String normalizeEmail(String raw) {
+        String value = raw.trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        if (value.length() > MAX_EMAIL_LENGTH || !EMAIL.matcher(value).matches()) {
+            throw ApiException.badRequest("digestEmail is not a valid email address");
+        }
+        return value;
     }
 }

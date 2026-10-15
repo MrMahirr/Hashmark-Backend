@@ -12,6 +12,7 @@ import dev.hashmark.repo.repository.RepoRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -33,6 +34,9 @@ public class RepoService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.unauthorized("User not found"));
 
+        if (user.getGithubToken() == null || user.getGithubToken().isBlank()) {
+            throw ApiException.badRequest("GitHub account is not connected");
+        }
         String decryptedToken = aesEncryptionUtil.decrypt(user.getGithubToken());
         
         List<GitHubRepoDto> githubRepos = gitHubRepoService.fetchUserRepos(decryptedToken);
@@ -48,15 +52,37 @@ public class RepoService {
         }
     }
 
+    /** İzlenen depolar (borç sayısı ve etiket kırılımıyla). */
     public List<RepoDto> getUserRepos(Long userId) {
+        Map<Long, Map<String, Integer>> breakdown = repoRepository.findOpenBreakdownByUserId(userId);
         return repoRepository.findAllByUserIdWithDebtCount(userId).stream()
+                .peek(repo -> repo.setDebtBreakdown(breakdown.getOrDefault(repo.getId(), Map.of())))
                 .map(this::mapToDto)
                 .collect(Collectors.toList());
+    }
+
+    /** GitHub'dan senkronlanmış ama henüz izlenmeyen depolar. */
+    public List<RepoDto> getCandidates(Long userId) {
+        return repoRepository.findCandidatesByUserId(userId).stream()
+                .map(repo -> {
+                    repo.setDebtCount(0);
+                    return mapToDto(repo);
+                })
+                .collect(Collectors.toList());
+    }
+
+    /** Adayı izlemeye alır; sonraki taramalara dahil olur. */
+    public RepoDto trackRepo(Long userId, Long repoId) {
+        if (repoRepository.markTracked(repoId, userId) == 0) {
+            throw ApiException.notFound("Repo not found");
+        }
+        return getRepo(userId, repoId);
     }
 
     public RepoDto getRepo(Long userId, Long repoId) {
         Repo repo = repoRepository.findByIdAndUserIdWithDebtCount(repoId, userId)
                 .orElseThrow(() -> ApiException.notFound("Repo not found"));
+        repo.setDebtBreakdown(repoRepository.findOpenBreakdownByUserId(userId).getOrDefault(repoId, Map.of()));
         return mapToDto(repo);
     }
 
@@ -91,6 +117,8 @@ public class RepoService {
                 .debtCount(repo.getDebtCount())
                 .trackedBranch(repo.getTrackedBranch())
                 .lastScannedSha(repo.getLastScannedSha())
+                .tracked(repo.getTracked())
+                .debtBreakdown(repo.getDebtBreakdown())
                 .build();
     }
 }

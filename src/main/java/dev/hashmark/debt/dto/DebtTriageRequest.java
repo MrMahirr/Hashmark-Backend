@@ -9,7 +9,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class DebtTriageRequest {
-    /** OPEN, IGNORED veya WONT_FIX */
+    /** OPEN (yeniden aç), IGNORED, WONT_FIX veya RESOLVED (elle çözüldü) */
     private String status;
     private String assignee;
 }

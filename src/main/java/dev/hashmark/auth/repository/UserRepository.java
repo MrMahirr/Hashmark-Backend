@@ -43,6 +43,11 @@ public class UserRepository {
         return jdbcTemplate.query(sql, userRowMapper);
     }
 
+    /** GitHub erişim jetonunu siler; hesap ve diğer veriler kalır. */
+    public int clearGithubToken(Long userId) {
+        return jdbcTemplate.update("UPDATE users SET github_token = NULL WHERE id = ?", userId);
+    }
+
     public User save(User user) {
         String sql = "INSERT INTO users (github_id, email, name, avatar_url, github_login, github_token) " +
                      "VALUES (?, ?, ?, ?, ?, ?) " +
