@@ -14,7 +14,11 @@ import java.time.LocalDateTime;
 public class ScanJob {
     private Long id;
     private Long repoId;
+    private Long userId;
     private String status;
+    private String branch;
+    private String commitSha;
+    private Integer attempts;
     private LocalDateTime startedAt;
     private LocalDateTime finishedAt;
     private Integer debtFound;

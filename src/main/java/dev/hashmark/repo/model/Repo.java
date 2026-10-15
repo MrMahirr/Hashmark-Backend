@@ -19,6 +19,8 @@ public class Repo {
     private Boolean isPrivate;
     private LocalDateTime lastScannedAt;
     private LocalDateTime createdAt;
+    private String trackedBranch;
+    private String lastScannedSha;
     
     // Transient / calculated field
     private Integer debtCount;

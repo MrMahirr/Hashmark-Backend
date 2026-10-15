@@ -4,40 +4,55 @@ import dev.hashmark.auth.model.User;
 import dev.hashmark.auth.repository.UserRepository;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.common.util.AesEncryptionUtil;
+import dev.hashmark.common.util.FingerprintUtil;
 import dev.hashmark.debt.dto.DebtDto;
+import dev.hashmark.debt.dto.ReplaceResult;
 import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
+import dev.hashmark.scanner.repository.ScanSnapshotRepository;
+import dev.hashmark.scanner.service.BlameEnrichmentService;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
 import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+/** Kuyruktan alınmış tek bir tarama işini çalıştırır. Çağıran {@link ScanJobDispatcher}'dır. */
 @Component
 public class ScanJobProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ScanJobProcessor.class);
 
     private final ScanJobRepository scanJobRepository;
+    private final ScanSnapshotRepository scanSnapshotRepository;
     private final GitHubFileService gitHubFileService;
+    private final BlameEnrichmentService blameEnrichmentService;
     private final DebtParserService debtParserService;
     private final DebtRepository debtRepository;
     private final UserRepository userRepository;
     private final RepoRepository repoRepository;
     private final AesEncryptionUtil aesEncryptionUtil;
 
-    public ScanJobProcessor(ScanJobRepository scanJobRepository, GitHubFileService gitHubFileService, DebtParserService debtParserService, DebtRepository debtRepository, UserRepository userRepository, RepoRepository repoRepository, AesEncryptionUtil aesEncryptionUtil) {
+    public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanSnapshotRepository scanSnapshotRepository,
+                            GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
+                            DebtParserService debtParserService, DebtRepository debtRepository,
+                            UserRepository userRepository, RepoRepository repoRepository,
+                            AesEncryptionUtil aesEncryptionUtil) {
         this.scanJobRepository = scanJobRepository;
+        this.scanSnapshotRepository = scanSnapshotRepository;
         this.gitHubFileService = gitHubFileService;
+        this.blameEnrichmentService = blameEnrichmentService;
         this.debtParserService = debtParserService;
         this.debtRepository = debtRepository;
         this.userRepository = userRepository;
@@ -45,9 +60,15 @@ public class ScanJobProcessor {
         this.aesEncryptionUtil = aesEncryptionUtil;
     }
 
-    @Async("taskExecutor")
-    public void processScan(Long repoId, Long userId, Long jobId) {
+    public void process(ScanJob job) {
+        Long jobId = job.getId();
+        Long repoId = job.getRepoId();
+        Long userId = job.getUserId();
+
         try {
+            if (userId == null) {
+                throw ApiException.badRequest("Scan job has no owner");
+            }
             User user = userRepository.findById(userId).orElseThrow(() -> ApiException.unauthorized("User not found"));
             String plainToken = aesEncryptionUtil.decrypt(user.getGithubToken());
             Repo repo = repoRepository.findByIdAndUserId(repoId, userId).orElseThrow(() -> ApiException.notFound("Repo not found"));
@@ -57,37 +78,79 @@ public class ScanJobProcessor {
             ScanResult result = gitHubFileService.scanRepository(
                     repo.getFullName(),
                     plainToken,
-                    (path, content) -> {
-                        for (DebtDto dto : debtParserService.parse(content, path)) {
-                            allDebts.add(Debt.builder()
-                                    .repoId(repoId)
-                                    .filePath(dto.getFilePath())
-                                    .lineNo(dto.getLineNo())
-                                    .label(dto.getLabel())
-                                    .content(dto.getContent())
-                                    .build());
-                        }
-                    },
+                    job.getBranch(),
+                    (path, content) -> allDebts.addAll(toDebts(repoId, path, content)),
                     processed -> scanJobRepository.updateProgress(jobId, processed));
 
             // Kısmi taramada yalnızca gerçekten taranan dosyaların borçları çözülür;
             // okunamayan veya çok büyük dosyaların borçları ise açık bırakılır.
-            debtRepository.replaceForRepo(
+            ReplaceResult replaced = debtRepository.replaceForRepo(
                     repoId,
                     allDebts,
+                    result.commitSha(),
                     result.truncated() ? result.scannedPaths() : null,
                     result.keepOpenPaths());
 
             scanJobRepository.complete(jobId, "DONE", allDebts.size(), result.scanned(), result.skipped(),
-                    result.failed(), buildMessage(result));
+                    result.failed(), result.commitSha(), buildMessage(result));
             repoRepository.updateLastScannedAt(repoId, LocalDateTime.now());
+            if (result.commitSha() != null) {
+                repoRepository.updateLastScannedSha(repoId, result.commitSha());
+            }
+
+            saveSnapshot(repoId, jobId, result.commitSha(), replaced);
+            enrichBlame(repoId, repo.getFullName(), plainToken, result.commitSha());
 
         } catch (ApiException e) {
             log.warn("Scan failed for repo {}: {}", repoId, e.getMessage());
-            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, e.getMessage());
+            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, e.getMessage());
         } catch (Exception e) {
             log.error("Scan failed for repo: " + repoId, e);
-            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, "Unexpected error while scanning");
+            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, "Unexpected error while scanning");
+        }
+    }
+
+    /** Dosyadaki yorumları ayrıştırır; aynı (etiket+içerik) tekrarlarına sıra numarası verir. */
+    List<Debt> toDebts(Long repoId, String path, String content) {
+        List<Debt> debts = new ArrayList<>();
+        Map<String, Integer> seen = new HashMap<>();
+        for (DebtDto dto : debtParserService.parse(content, path)) {
+            String fingerprint = FingerprintUtil.fingerprint(dto.getLabel(), dto.getContent());
+            int occurrence = seen.merge(fingerprint, 1, Integer::sum) - 1;
+            debts.add(Debt.builder()
+                    .repoId(repoId)
+                    .filePath(dto.getFilePath())
+                    .lineNo(dto.getLineNo())
+                    .label(dto.getLabel())
+                    .content(dto.getContent())
+                    .fingerprint(fingerprint)
+                    .occurrence(occurrence)
+                    .parsedAssignee(dto.getAssignee())
+                    .priority(dto.getPriority())
+                    .dueDate(dto.getDueDate())
+                    .issueRef(dto.getIssueRef())
+                    .build());
+        }
+        return debts;
+    }
+
+    private void saveSnapshot(Long repoId, Long jobId, String sha, ReplaceResult replaced) {
+        try {
+            scanSnapshotRepository.save(repoId, jobId, sha, replaced.openTotal(), replaced.openByLabel(),
+                    replaced.added(), replaced.resolved());
+        } catch (Exception e) {
+            log.warn("Could not save scan snapshot for repo {}", repoId, e);
+        }
+    }
+
+    private void enrichBlame(Long repoId, String fullName, String token, String sha) {
+        try {
+            int updated = blameEnrichmentService.enrich(repoId, fullName, token, sha);
+            if (updated > 0) {
+                log.info("Blame enrichment updated {} debt(s) of repo {}", updated, repoId);
+            }
+        } catch (Exception e) {
+            log.warn("Blame enrichment failed for repo {}", repoId, e);
         }
     }
 

@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Data
@@ -20,4 +21,14 @@ public class Debt {
     private String content;
     private LocalDateTime detectedAt;
     private LocalDateTime resolvedAt;
+
+    // Kimlik: aynı dosyada aynı (etiket + içerik) için sıra numarası ile birlikte benzersizdir.
+    private String fingerprint;
+    private Integer occurrence;
+
+    // Parser üst verisi (her taramada yeniden yazılır)
+    private String parsedAssignee;
+    private String priority;
+    private LocalDate dueDate;
+    private String issueRef;
 }

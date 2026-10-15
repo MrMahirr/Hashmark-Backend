@@ -38,6 +38,8 @@ class GitHubFileServiceTest {
     private volatile int tarballFailuresBeforeSuccess;
     private volatile int tarballFailureStatus = 429;
     private volatile int tarballFinalStatus = 302;
+    private volatile String lastTarballPath;
+    private volatile String lastIgnoreQuery;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -45,6 +47,7 @@ class GitHubFileServiceTest {
         int port = server.getAddress().getPort();
 
         server.createContext("/repos/o/r/contents/.hashmarkignore", ex -> {
+            lastIgnoreQuery = ex.getRequestURI().getRawQuery();
             if (ignoreFile == null) {
                 respond(ex, 404, new byte[0], Map.of());
             } else {
@@ -53,6 +56,7 @@ class GitHubFileServiceTest {
         });
         server.createContext("/repos/o/r/tarball", ex -> {
             int call = tarballCalls.incrementAndGet();
+            lastTarballPath = ex.getRequestURI().getPath();
             if (call <= tarballFailuresBeforeSuccess) {
                 respond(ex, tarballFailureStatus, new byte[0], Map.of("Retry-After", "1"));
                 return;
@@ -72,7 +76,7 @@ class GitHubFileServiceTest {
         props = new ScanProperties();
         props.setGithubApiUrl("http://127.0.0.1:" + port);
         props.setMaxRateLimitWaitSeconds(5);
-        service = new GitHubFileService(props);
+        service = new GitHubFileService(props, new GitHubHttpClient(props));
     }
 
     @AfterEach
@@ -92,7 +96,7 @@ class GitHubFileServiceTest {
     }
 
     private ScanResult scan(Map<String, String> sink) {
-        return service.scanRepository("o/r", "secret-token", sink::put, null);
+        return service.scanRepository("o/r", "secret-token", null, sink::put, null);
     }
 
     @Test
@@ -178,7 +182,7 @@ class GitHubFileServiceTest {
                 .tarGz();
 
         List<String> ok = new CopyOnWriteArrayList<>();
-        ScanResult result = service.scanRepository("o/r", "t", (path, content) -> {
+        ScanResult result = service.scanRepository("o/r", "t", null, (path, content) -> {
             if (path.equals("bad.java")) {
                 throw new IllegalStateException("parser exploded");
             }
@@ -242,9 +246,38 @@ class GitHubFileServiceTest {
 
     @Test
     void rejectsSuspiciousRepositoryNames() {
-        assertThrows(ApiException.class, () -> service.scanRepository("../etc/passwd", "t", (p, c) -> { }, null));
-        assertThrows(ApiException.class, () -> service.scanRepository("o/r?x=1", "t", (p, c) -> { }, null));
-        assertThrows(ApiException.class, () -> service.scanRepository(null, "t", (p, c) -> { }, null));
+        assertThrows(ApiException.class, () -> service.scanRepository("../etc/passwd", "t", null, (p, c) -> { }, null));
+        assertThrows(ApiException.class, () -> service.scanRepository("o/r?x=1", "t", null, (p, c) -> { }, null));
+        assertThrows(ApiException.class, () -> service.scanRepository(null, "t", null, (p, c) -> { }, null));
+    }
+
+    @Test
+    void scansRequestedBranchAndReadsIgnoreFileFromIt() {
+        archive = new TarTestSupport().file("o-r-abc/A.java", "// TODO: a").tarGz();
+
+        ScanResult result = service.scanRepository("o/r", "t", "feature/x-1", (p, c) -> { }, null);
+
+        assertEquals(1, result.scanned());
+        assertEquals("/repos/o/r/tarball/feature/x-1", lastTarballPath);
+        assertEquals("ref=feature%2Fx-1", lastIgnoreQuery);
+    }
+
+    @Test
+    void rejectsInvalidBranchNames() {
+        assertThrows(ApiException.class, () -> service.scanRepository("o/r", "t", "../secret", (p, c) -> { }, null));
+        assertThrows(ApiException.class, () -> service.scanRepository("o/r", "t", "a b;rm -rf", (p, c) -> { }, null));
+        assertTrue(GitHubFileService.isValidBranch("release/1.2"));
+        assertFalse(GitHubFileService.isValidBranch("a..b"));
+        assertFalse(GitHubFileService.isValidBranch("/lead"));
+    }
+
+    @Test
+    void readsCommitShaFromArchiveHeader() {
+        archive = new TarTestSupport().globalHeader().file("o-r-abc/A.java", "// TODO: a").tarGz();
+
+        ScanResult result = scan(new LinkedHashMap<>());
+
+        assertEquals("0123456789abcdef0123456789abcdef01234567", result.commitSha());
     }
 
     @Test
@@ -256,7 +289,7 @@ class GitHubFileServiceTest {
         archive = tar.tarGz();
 
         List<Integer> progress = new CopyOnWriteArrayList<>();
-        service.scanRepository("o/r", "t", (p, c) -> { }, progress::add);
+        service.scanRepository("o/r", "t", null, (p, c) -> { }, progress::add);
 
         assertEquals(List.of(50, 100), progress);
     }

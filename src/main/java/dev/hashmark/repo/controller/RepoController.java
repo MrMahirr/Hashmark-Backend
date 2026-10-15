@@ -42,6 +42,16 @@ public class RepoController {
         return repoService.getRepo(userId, id);
     }
 
+    @PutMapping("/{id}/branch")
+    @Operation(summary = "Taranacak dali ayarla (bos = varsayilan dal)")
+    public RepoDto setBranch(@AuthenticationPrincipal Long userId, @PathVariable Long id,
+                             @RequestBody BranchRequest request) {
+        return repoService.setTrackedBranch(userId, id, request.branch());
+    }
+
+    public record BranchRequest(String branch) {
+    }
+
     @DeleteMapping("/{id}")
     @Operation(summary = "Repoyu sil")
     public ResponseEntity<Void> deleteRepo(@AuthenticationPrincipal Long userId, @PathVariable Long id) {

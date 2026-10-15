@@ -6,6 +6,7 @@ import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.common.util.AesEncryptionUtil;
 import dev.hashmark.repo.dto.GitHubRepoDto;
 import dev.hashmark.repo.dto.RepoDto;
+import dev.hashmark.scanner.service.GitHubFileService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
 import org.springframework.stereotype.Service;
@@ -59,6 +60,21 @@ public class RepoService {
         return mapToDto(repo);
     }
 
+    /**
+     * Taramanın izleyeceği dalı ayarlar. Boş/null → deponun varsayılan dalı.
+     * Dal GitHub'da bulunmuyorsa bir sonraki tarama açıklayıcı bir hatayla başarısız olur.
+     */
+    public RepoDto setTrackedBranch(Long userId, Long repoId, String branch) {
+        String normalized = (branch == null || branch.isBlank()) ? null : branch.trim();
+        if (normalized != null && !GitHubFileService.isValidBranch(normalized)) {
+            throw ApiException.badRequest("Invalid branch name");
+        }
+        if (repoRepository.updateTrackedBranch(repoId, userId, normalized) == 0) {
+            throw ApiException.notFound("Repo not found");
+        }
+        return getRepo(userId, repoId);
+    }
+
     public void deleteRepo(Long userId, Long repoId) {
         repoRepository.deleteByIdAndUserId(repoId, userId);
     }
@@ -73,6 +89,8 @@ public class RepoService {
                 .lastScannedAt(repo.getLastScannedAt())
                 .createdAt(repo.getCreatedAt())
                 .debtCount(repo.getDebtCount())
+                .trackedBranch(repo.getTrackedBranch())
+                .lastScannedSha(repo.getLastScannedSha())
                 .build();
     }
 }

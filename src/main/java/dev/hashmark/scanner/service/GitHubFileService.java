@@ -9,8 +9,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpHeaders;
+import java.net.URLEncoder;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -23,13 +22,14 @@ import java.util.function.IntConsumer;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
+import static dev.hashmark.scanner.service.GitHubHttpClient.closeQuietly;
+
 /**
  * GitHub deposunu <b>tek bir tarball isteğiyle</b> indirip akış halinde işler.
  *
  * <p>Eski yaklaşım (ağaç + dosya başına {@code /contents} isteği) 5000 istek/saat limitine hızla
  * çarpıyordu; ağaç yanıtı büyük depolarda kesiliyor ve 1 MB üstü dosyalar boş dönüyordu.
- * Bu sınıf ayrıca rate-limit bekleme, 5xx/ağ hatalarında üstel geri çekilme ve çalışma süresi /
- * dosya sayısı sınırlarını yönetir.
+ * HTTP ayrıntıları (rate-limit, yeniden deneme) {@link GitHubHttpClient} içindedir.
  */
 @Service
 public class GitHubFileService {
@@ -37,20 +37,18 @@ public class GitHubFileService {
     private static final Logger log = LoggerFactory.getLogger(GitHubFileService.class);
 
     private static final Pattern REPO_FULL_NAME = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
-    private static final int MAX_ATTEMPTS = 4;
+    private static final Pattern BRANCH_NAME = Pattern.compile("^[A-Za-z0-9._/-]{1,255}$");
     private static final int PROGRESS_EVERY = 50;
+    private static final long HEARTBEAT_MILLIS = 20_000L;
     private static final int BINARY_SNIFF_BYTES = 8000;
     private static final int MAX_IGNORE_FILE_BYTES = 64 * 1024;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NEVER) // yönlendirmeyi elle izleyip token'ı başka hosta sızdırmıyoruz
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
-
     private final ScanProperties properties;
+    private final GitHubHttpClient http;
 
-    public GitHubFileService(ScanProperties properties) {
+    public GitHubFileService(ScanProperties properties, GitHubHttpClient http) {
         this.properties = properties;
+        this.http = http;
     }
 
     /** Her taranan dosya için çağrılır. */
@@ -63,20 +61,36 @@ public class GitHubFileService {
      * @param scannedPaths başarıyla işlenen dosyalar
      * @param keepOpenPaths işlenemeyen / boyut nedeniyle atlanan dosyalar (borçları çözülmüş sayılmamalı)
      * @param truncated    sınıra takıldığı için depo kısmen tarandı mı
+     * @param commitSha    taranan commit (arşiv başlığından; bilinmiyorsa {@code null})
      */
     public record ScanResult(int scanned, int skipped, int failed, Set<String> scannedPaths,
-                             Set<String> keepOpenPaths, boolean truncated, String truncationReason) {
+                             Set<String> keepOpenPaths, boolean truncated, String truncationReason,
+                             String commitSha) {
     }
 
-    public ScanResult scanRepository(String repoFullName, String githubToken, FileHandler handler,
-                                     IntConsumer progress) {
+    /** Dal adı güvenli mi? ({@code null} veya boş = varsayılan dal) */
+    public static boolean isValidBranch(String branch) {
+        return branch != null && BRANCH_NAME.matcher(branch).matches() && !branch.contains("..")
+                && !branch.startsWith("/") && !branch.endsWith("/");
+    }
+
+    /**
+     * @param branch {@code null} ise deponun varsayılan dalı taranır
+     * @param progress her {@value #PROGRESS_EVERY} dosyada ve en az 20 sn'de bir çağrılır (kalp atışı)
+     */
+    public ScanResult scanRepository(String repoFullName, String githubToken, String branch,
+                                     FileHandler handler, IntConsumer progress) {
         if (repoFullName == null || !REPO_FULL_NAME.matcher(repoFullName).matches()) {
             throw ApiException.badRequest("Invalid repository name");
         }
+        if (branch != null && !branch.isBlank() && !isValidBranch(branch)) {
+            throw ApiException.badRequest("Invalid branch name");
+        }
+        String ref = (branch == null || branch.isBlank()) ? null : branch;
 
         Instant deadline = Instant.now().plusSeconds(properties.getMaxDurationSeconds());
         ScanFileFilter filter = new ScanFileFilter(
-                Set.copyOf(properties.getExcludedDirs()), fetchIgnoreFile(repoFullName, githubToken));
+                Set.copyOf(properties.getExcludedDirs()), fetchIgnoreFile(repoFullName, githubToken, ref));
 
         Set<String> scannedPaths = new HashSet<>();
         Set<String> keepOpen = new HashSet<>();
@@ -85,15 +99,25 @@ public class GitHubFileService {
         int failed = 0;
         boolean truncated = false;
         String reason = null;
+        String commitSha = null;
 
-        Optional<InputStream> archive = openArchive(repoFullName, githubToken);
+        Optional<InputStream> archive = openArchive(repoFullName, githubToken, ref);
         if (archive.isEmpty()) { // boş depo
-            return new ScanResult(0, 0, 0, scannedPaths, keepOpen, false, null);
+            return new ScanResult(0, 0, 0, scannedPaths, keepOpen, false, null, null);
         }
 
+        long lastBeat = System.currentTimeMillis();
         try (TarArchiveReader tar = new TarArchiveReader(new GZIPInputStream(archive.get(), 64 * 1024))) {
             TarArchiveReader.Entry entry;
             while ((entry = tar.next()) != null) {
+                if (commitSha == null) {
+                    commitSha = tar.globalCommitSha();
+                }
+                if (progress != null && System.currentTimeMillis() - lastBeat >= HEARTBEAT_MILLIS) {
+                    progress.accept(scanned + failed);
+                    lastBeat = System.currentTimeMillis();
+                }
+
                 String path = stripRootDirectory(entry.path());
                 if (path == null || !filter.shouldScan(path)) {
                     continue;
@@ -132,27 +156,33 @@ public class GitHubFileService {
 
                 if (progress != null && (scanned + failed) % PROGRESS_EVERY == 0) {
                     progress.accept(scanned + failed);
+                    lastBeat = System.currentTimeMillis();
                 }
+            }
+            if (commitSha == null) {
+                commitSha = tar.globalCommitSha();
             }
         } catch (IOException e) {
             log.warn("Archive stream failed for {}", repoFullName, e);
             throw ApiException.badGateway("Failed to download the repository archive from GitHub");
         }
 
-        return new ScanResult(scanned, skipped, failed, scannedPaths, keepOpen, truncated, reason);
+        return new ScanResult(scanned, skipped, failed, scannedPaths, keepOpen, truncated, reason, commitSha);
     }
 
     // ------------------------------------------------------------------
     // GitHub istekleri
     // ------------------------------------------------------------------
 
-    /** Repo kökündeki {@code .hashmarkignore}; yoksa veya okunamazsa {@code null}. */
-    private String fetchIgnoreFile(String repoFullName, String token) {
-        HttpRequest request = baseRequest(URI.create(properties.getGithubApiUrl() + "/repos/" + repoFullName + "/contents/.hashmarkignore"), token)
+    /** İlgili daldaki {@code .hashmarkignore}; yoksa veya okunamazsa {@code null}. */
+    private String fetchIgnoreFile(String repoFullName, String token, String ref) {
+        String url = http.apiUrl() + "/repos/" + repoFullName + "/contents/.hashmarkignore"
+                + (ref == null ? "" : "?ref=" + URLEncoder.encode(ref, StandardCharsets.UTF_8));
+        HttpRequest request = http.request(URI.create(url), token)
                 .header("Accept", "application/vnd.github.raw+json")
                 .timeout(Duration.ofSeconds(20))
                 .GET().build();
-        HttpResponse<InputStream> response = sendWithRetry(request);
+        HttpResponse<InputStream> response = http.send(request);
         try (InputStream body = response.body()) {
             if (response.statusCode() == 200) {
                 return new String(body.readNBytes(MAX_IGNORE_FILE_BYTES), StandardCharsets.UTF_8);
@@ -167,12 +197,14 @@ public class GitHubFileService {
         }
     }
 
-    /** Varsayılan dal tarball'ı; boş depo (409) için {@code Optional.empty()}. */
-    private Optional<InputStream> openArchive(String repoFullName, String token) {
-        HttpRequest api = baseRequest(URI.create(properties.getGithubApiUrl() + "/repos/" + repoFullName + "/tarball"), token)
+    /** Dal (veya varsayılan dal) tarball'ı; boş depo (409) için {@code Optional.empty()}. */
+    private Optional<InputStream> openArchive(String repoFullName, String token, String ref) {
+        String url = http.apiUrl() + "/repos/" + repoFullName + "/tarball"
+                + (ref == null ? "" : "/" + encodeRef(ref));
+        HttpRequest api = http.request(URI.create(url), token)
                 .timeout(Duration.ofSeconds(60))
                 .GET().build();
-        HttpResponse<InputStream> response = sendWithRetry(api);
+        HttpResponse<InputStream> response = http.send(api);
 
         int status = response.statusCode();
         if (status == 301 || status == 302 || status == 307 || status == 308) {
@@ -184,7 +216,7 @@ public class GitHubFileService {
                     .header("User-Agent", "Hashmark")
                     .timeout(Duration.ofSeconds(60))
                     .GET().build();
-            response = sendWithRetry(download);
+            response = http.send(download);
             status = response.statusCode();
         }
 
@@ -195,7 +227,9 @@ public class GitHubFileService {
         switch (status) {
             case 401 -> throw ApiException.unauthorized("GitHub token is invalid or revoked, please sign in again");
             case 403 -> throw ApiException.forbidden("GitHub denied access to this repository");
-            case 404 -> throw ApiException.notFound("Repository not found or not accessible with your GitHub token");
+            case 404 -> throw ApiException.notFound(ref == null
+                    ? "Repository not found or not accessible with your GitHub token"
+                    : "Repository or branch '" + ref + "' not found or not accessible");
             case 409 -> {
                 return Optional.empty();
             }
@@ -203,102 +237,19 @@ public class GitHubFileService {
         }
     }
 
-    private HttpRequest.Builder baseRequest(URI uri, String token) {
-        return HttpRequest.newBuilder(uri)
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "Hashmark");
-    }
-
-    /**
-     * Rate-limit (403/429 + sınır başlıkları) için makul süreler beklenir; 5xx ve ağ hatalarında
-     * üstel geri çekilmeyle yeniden denenir. Başarısız olursa anlamlı bir {@link ApiException} fırlatır.
-     */
-    private HttpResponse<InputStream> sendWithRetry(HttpRequest request) {
-        for (int attempt = 1; ; attempt++) {
-            try {
-                HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-                int status = response.statusCode();
-
-                if (status == 403 || status == 429) {
-                    long waitMillis = rateLimitWaitMillis(response.headers());
-                    if (waitMillis >= 0 || status == 429) {
-                        closeQuietly(response.body());
-                        long maxWait = properties.getMaxRateLimitWaitSeconds() * 1000L;
-                        if (waitMillis >= 0 && waitMillis <= maxWait && attempt < MAX_ATTEMPTS) {
-                            log.info("GitHub rate limit hit, waiting {} ms", waitMillis);
-                            sleep(waitMillis);
-                            continue;
-                        }
-                        throw ApiException.tooManyRequests(
-                                "GitHub API rate limit exceeded" + resetHint(response.headers()) + ". Please try again later");
-                    }
-                    return response; // rate-limit değil: gerçek 403 (yetki)
-                }
-
-                if (status >= 500 && attempt < MAX_ATTEMPTS) {
-                    closeQuietly(response.body());
-                    sleep(backoffMillis(attempt));
-                    continue;
-                }
-                return response;
-            } catch (IOException e) {
-                if (attempt >= MAX_ATTEMPTS) {
-                    throw ApiException.badGateway("Could not reach GitHub: " + e.getClass().getSimpleName());
-                }
-                sleep(backoffMillis(attempt));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw ApiException.serviceUnavailable("Scan was interrupted");
-            }
-        }
-    }
-
-    /** Beklenecek süre (ms); rate-limit değilse -1. */
-    private static long rateLimitWaitMillis(HttpHeaders headers) {
-        Optional<String> retryAfter = headers.firstValue("Retry-After");
-        if (retryAfter.isPresent()) {
-            try {
-                return Long.parseLong(retryAfter.get().trim()) * 1000L;
-            } catch (NumberFormatException ignored) {
-                return -1;
-            }
-        }
-        if ("0".equals(headers.firstValue("X-RateLimit-Remaining").orElse(null))) {
-            try {
-                long reset = Long.parseLong(headers.firstValue("X-RateLimit-Reset").orElse("0"));
-                return Math.max(0, reset * 1000L - System.currentTimeMillis()) + 1000L;
-            } catch (NumberFormatException ignored) {
-                return 60_000L;
-            }
-        }
-        return -1;
-    }
-
-    private static String resetHint(HttpHeaders headers) {
-        try {
-            long reset = Long.parseLong(headers.firstValue("X-RateLimit-Reset").orElse(""));
-            return " (resets at " + Instant.ofEpochSecond(reset) + ")";
-        } catch (NumberFormatException e) {
-            return "";
-        }
-    }
-
-    private static long backoffMillis(int attempt) {
-        return 1000L * (1L << (attempt - 1)); // 1s, 2s, 4s
-    }
-
-    private static void sleep(long millis) {
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw ApiException.serviceUnavailable("Scan was interrupted");
-        }
-    }
-
     // ------------------------------------------------------------------
+
+    /** Dal adındaki her parçayı kodlar, '/' ayraçlarını korur. */
+    private static String encodeRef(String ref) {
+        StringBuilder out = new StringBuilder();
+        for (String part : ref.split("/")) {
+            if (out.length() > 0) {
+                out.append('/');
+            }
+            out.append(URLEncoder.encode(part, StandardCharsets.UTF_8).replace("+", "%20"));
+        }
+        return out.toString();
+    }
 
     private static String stripRootDirectory(String entryPath) {
         int slash = entryPath.indexOf('/');
@@ -316,13 +267,5 @@ public class GitHubFileService {
             }
         }
         return false;
-    }
-
-    private static void closeQuietly(InputStream stream) {
-        try {
-            stream.close();
-        } catch (IOException ignored) {
-            // yok sayılır
-        }
     }
 }

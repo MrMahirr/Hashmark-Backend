@@ -5,8 +5,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Timestamp;
+import java.util.List;
 import java.util.Optional;
 
+/**
+ * Tarama işleri aynı zamanda kalıcı kuyruktur: PENDING → RUNNING → DONE/FAILED.
+ * Çalışan iş {@code heartbeat_at} ile canlılığını bildirir; kalp atışı kesilen iş yeniden kuyruğa alınır.
+ */
 @Repository
 public class ScanJobRepository {
 
@@ -16,55 +22,89 @@ public class ScanJobRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    private static java.time.LocalDateTime ts(Timestamp t) {
+        return t != null ? t.toLocalDateTime() : null;
+    }
+
     private final RowMapper<ScanJob> scanJobRowMapper = (rs, rowNum) -> ScanJob.builder()
             .id(rs.getLong("id"))
             .repoId(rs.getLong("repo_id"))
+            .userId(rs.getObject("user_id") != null ? rs.getLong("user_id") : null)
             .status(rs.getString("status"))
-            .startedAt(rs.getTimestamp("started_at") != null ? rs.getTimestamp("started_at").toLocalDateTime() : null)
-            .finishedAt(rs.getTimestamp("finished_at") != null ? rs.getTimestamp("finished_at").toLocalDateTime() : null)
+            .branch(rs.getString("branch"))
+            .commitSha(rs.getString("commit_sha"))
+            .attempts(rs.getInt("attempts"))
+            .startedAt(ts(rs.getTimestamp("started_at")))
+            .finishedAt(ts(rs.getTimestamp("finished_at")))
             .debtFound(rs.getInt("debt_found"))
             .filesScanned(rs.getInt("files_scanned"))
             .filesSkipped(rs.getInt("files_skipped"))
             .filesFailed(rs.getInt("files_failed"))
             .message(rs.getString("message"))
-            .createdAt(rs.getTimestamp("created_at").toLocalDateTime())
+            .createdAt(ts(rs.getTimestamp("created_at")))
             .build();
 
-    public ScanJob save(ScanJob job) {
-        String sql = "INSERT INTO scan_jobs (repo_id, status, started_at) " +
-                     "VALUES (?, 'RUNNING', NOW()) RETURNING *";
-                     
-        return jdbcTemplate.queryForObject(sql, scanJobRowMapper, job.getRepoId());
+    /** Yeni iş kuyruğa PENDING olarak eklenir. Repo için aktif iş varsa {@code DuplicateKeyException} fırlatır. */
+    public ScanJob enqueue(Long repoId, Long userId, String branch) {
+        String sql = "INSERT INTO scan_jobs (repo_id, user_id, branch, status) " +
+                     "VALUES (?, ?, ?, 'PENDING') RETURNING *";
+        return jdbcTemplate.queryForObject(sql, scanJobRowMapper, repoId, userId, branch);
+    }
+
+    /** Bekleyen işleri atomik olarak sahiplenir (çoklu instance'ta aynı iş iki kez alınmaz). */
+    public List<ScanJob> claimPending(int limit) {
+        String sql = "UPDATE scan_jobs SET status = 'RUNNING', started_at = NOW(), heartbeat_at = NOW(), " +
+                     "attempts = attempts + 1 " +
+                     "WHERE id IN (SELECT id FROM scan_jobs WHERE status = 'PENDING' " +
+                     "ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED) RETURNING *";
+        return jdbcTemplate.query(sql, scanJobRowMapper, limit);
+    }
+
+    /** Sahiplenilmiş ama çalıştırılamamış işi kuyruğa geri koyar. */
+    public void release(Long jobId) {
+        jdbcTemplate.update("UPDATE scan_jobs SET status = 'PENDING', attempts = GREATEST(attempts - 1, 0) " +
+                            "WHERE id = ? AND status = 'RUNNING'", jobId);
     }
 
     public void updateProgress(Long jobId, int filesProcessed) {
-        String sql = "UPDATE scan_jobs SET files_scanned = ? WHERE id = ? AND status = 'RUNNING'";
+        String sql = "UPDATE scan_jobs SET files_scanned = ?, heartbeat_at = NOW() WHERE id = ? AND status = 'RUNNING'";
         jdbcTemplate.update(sql, filesProcessed, jobId);
     }
 
+    public void heartbeat(Long jobId) {
+        jdbcTemplate.update("UPDATE scan_jobs SET heartbeat_at = NOW() WHERE id = ? AND status = 'RUNNING'", jobId);
+    }
+
     public void complete(Long jobId, String status, int debtFound, int filesScanned, int filesSkipped,
-                         int filesFailed, String message) {
+                         int filesFailed, String commitSha, String message) {
         String sql = "UPDATE scan_jobs SET status = ?, debt_found = ?, files_scanned = ?, files_skipped = ?, " +
-                     "files_failed = ?, message = ?, finished_at = NOW() WHERE id = ?";
-        jdbcTemplate.update(sql, status, debtFound, filesScanned, filesSkipped, filesFailed, message, jobId);
+                     "files_failed = ?, commit_sha = ?, message = ?, finished_at = NOW() WHERE id = ?";
+        jdbcTemplate.update(sql, status, debtFound, filesScanned, filesSkipped, filesFailed, commitSha, message, jobId);
     }
 
-    /** Belirli süreden uzun süredir RUNNING görünen (takılı kalmış) işleri başarısız say. */
-    public int failStaleRunningJobs(Long repoId, long staleMinutes) {
-        String sql = "UPDATE scan_jobs SET status = 'FAILED', finished_at = NOW(), message = 'Timed out' " +
-                     "WHERE repo_id = ? AND status = 'RUNNING' AND started_at < NOW() - (? * INTERVAL '1 minute')";
-        return jdbcTemplate.update(sql, repoId, staleMinutes);
-    }
-
-    /** Uygulama yeniden başlarken yarım kalan tüm işleri kapat. */
-    public int failAllRunningJobs() {
-        String sql = "UPDATE scan_jobs SET status = 'FAILED', finished_at = NOW(), message = 'Interrupted by restart' " +
-                     "WHERE status = 'RUNNING'";
-        return jdbcTemplate.update(sql);
+    /**
+     * Kalp atışı kesilen RUNNING işleri yeniden kuyruğa alır; deneme hakkı bitenleri başarısız yapar.
+     *
+     * @return yeniden kuyruğa alınan + başarısız yapılan iş sayısı
+     */
+    public int recoverStale(long timeoutMinutes, int maxAttempts) {
+        String requeue = "UPDATE scan_jobs SET status = 'PENDING', message = 'Re-queued after interruption' " +
+                         "WHERE status = 'RUNNING' AND attempts < ? " +
+                         "AND COALESCE(heartbeat_at, started_at, created_at) < NOW() - (? * INTERVAL '1 minute')";
+        String fail = "UPDATE scan_jobs SET status = 'FAILED', finished_at = NOW(), " +
+                      "message = 'Interrupted too many times' " +
+                      "WHERE status = 'RUNNING' AND attempts >= ? " +
+                      "AND COALESCE(heartbeat_at, started_at, created_at) < NOW() - (? * INTERVAL '1 minute')";
+        return jdbcTemplate.update(requeue, maxAttempts, timeoutMinutes)
+                + jdbcTemplate.update(fail, maxAttempts, timeoutMinutes);
     }
 
     public Optional<ScanJob> findLatestByRepoId(Long repoId) {
-        String sql = "SELECT * FROM scan_jobs WHERE repo_id = ? ORDER BY created_at DESC LIMIT 1";
+        String sql = "SELECT * FROM scan_jobs WHERE repo_id = ? ORDER BY created_at DESC, id DESC LIMIT 1";
         return jdbcTemplate.query(sql, scanJobRowMapper, repoId).stream().findFirst();
+    }
+
+    public Optional<ScanJob> findById(Long jobId) {
+        return jdbcTemplate.query("SELECT * FROM scan_jobs WHERE id = ?", scanJobRowMapper, jobId).stream().findFirst();
     }
 }

@@ -6,6 +6,7 @@ import dev.hashmark.report.dto.TrendDataPoint;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,7 +22,89 @@ public class ReportRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    private static final int TREND_WEEKS = 8;
+
     public List<TrendDataPoint> getTrendData(Long userId, Long repoId) {
+        List<TrendDataPoint> fromSnapshots = getTrendFromSnapshots(userId, repoId, LocalDate.now());
+        return fromSnapshots.isEmpty() ? getTrendFromDebtTimestamps(userId, repoId) : fromSnapshots;
+    }
+
+    /**
+     * Tarama anlık görüntülerinden haftalık trend: her hafta için depo başına o haftaki son görüntü
+     * (görüntüsü olmayan haftalarda önceki değer taşınır), eklenen/çözülen ise haftanın toplamıdır.
+     */
+    public List<TrendDataPoint> getTrendFromSnapshots(Long userId, Long repoId, LocalDate today) {
+        LocalDate lastWeek = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+        LocalDate firstWeek = lastWeek.minusWeeks(TREND_WEEKS - 1L);
+        Timestamp windowStart = Timestamp.valueOf(firstWeek.atStartOfDay());
+
+        StringBuilder scope = new StringBuilder(" WHERE r.user_id = ? ");
+        List<Object> scopeParams = new ArrayList<>();
+        scopeParams.add(userId);
+        if (repoId != null) {
+            scope.append(" AND s.repo_id = ? ");
+            scopeParams.add(repoId);
+        }
+
+        // Pencereden önceki son değer (taşıma için başlangıç noktası)
+        Map<Long, Integer> current = new HashMap<>();
+        jdbcTemplate.query(
+                "SELECT DISTINCT ON (s.repo_id) s.repo_id, s.total_open FROM scan_snapshots s " +
+                "JOIN repos r ON r.id = s.repo_id " + scope + " AND s.taken_at < ? " +
+                "ORDER BY s.repo_id, s.taken_at DESC, s.id DESC",
+                rs -> {
+                    current.put(rs.getLong("repo_id"), rs.getInt("total_open"));
+                },
+                appendParam(scopeParams, windowStart));
+
+        List<Object[]> rows = new ArrayList<>();
+        jdbcTemplate.query(
+                "SELECT s.repo_id, s.taken_at, s.total_open, s.added, s.resolved FROM scan_snapshots s " +
+                "JOIN repos r ON r.id = s.repo_id " + scope + " AND s.taken_at >= ? " +
+                "ORDER BY s.taken_at ASC, s.id ASC",
+                rs -> {
+                    rows.add(new Object[]{rs.getLong("repo_id"), rs.getTimestamp("taken_at").toLocalDateTime().toLocalDate(),
+                            rs.getInt("total_open"), rs.getInt("added"), rs.getInt("resolved")});
+                },
+                appendParam(scopeParams, windowStart));
+
+        if (rows.isEmpty() && current.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<TrendDataPoint> result = new ArrayList<>();
+        int index = 0;
+        boolean started = !current.isEmpty();
+        for (int w = 0; w < TREND_WEEKS; w++) {
+            LocalDate weekStart = firstWeek.plusWeeks(w);
+            LocalDate weekEnd = weekStart.plusWeeks(1);
+            int added = 0;
+            int resolved = 0;
+            boolean hadSnapshot = false;
+            while (index < rows.size() && ((LocalDate) rows.get(index)[1]).isBefore(weekEnd)) {
+                Object[] row = rows.get(index++);
+                current.put((Long) row[0], (Integer) row[2]);
+                added += (Integer) row[3];
+                resolved += (Integer) row[4];
+                hadSnapshot = true;
+            }
+            started = started || hadSnapshot;
+            if (started) {
+                int total = current.values().stream().mapToInt(Integer::intValue).sum();
+                result.add(new TrendDataPoint(weekStart, total, added, resolved));
+            }
+        }
+        return result;
+    }
+
+    private static Object[] appendParam(List<Object> params, Object extra) {
+        List<Object> all = new ArrayList<>(params);
+        all.add(extra);
+        return all.toArray();
+    }
+
+    /** Anlık görüntü yoksa (eski veriler) borç zaman damgalarından yaklaşık trend. */
+    private List<TrendDataPoint> getTrendFromDebtTimestamps(Long userId, Long repoId) {
         Map<LocalDate, TrendDataPoint> pointMap = new HashMap<>();
 
         // New debts query
@@ -79,7 +162,7 @@ public class ReportRepository {
         StringBuilder sql = new StringBuilder(
                 "SELECT label, COUNT(*) as cnt " +
                 "FROM debts d JOIN repos r ON d.repo_id = r.id " +
-                "WHERE r.user_id = ? AND d.resolved_at IS NULL "
+                "WHERE r.user_id = ? AND d.resolved_at IS NULL AND d.triage_status = 'OPEN' "
         );
         List<Object> params = new ArrayList<>();
         params.add(userId);
@@ -112,7 +195,7 @@ public class ReportRepository {
         StringBuilder sql = new StringBuilder(
                 "SELECT split_part(file_path, '/', 1) as module, COUNT(*) as cnt " +
                 "FROM debts d JOIN repos r ON d.repo_id = r.id " +
-                "WHERE r.user_id = ? AND d.resolved_at IS NULL "
+                "WHERE r.user_id = ? AND d.resolved_at IS NULL AND d.triage_status = 'OPEN' "
         );
         List<Object> params = new ArrayList<>();
         params.add(userId);

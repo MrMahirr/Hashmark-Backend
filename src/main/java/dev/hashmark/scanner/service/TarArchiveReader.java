@@ -22,6 +22,7 @@ final class TarArchiveReader implements Closeable {
     private long remaining;   // mevcut girdinin henüz okunmamış veri baytları
     private long padding;     // mevcut girdinin 512'ye hizalama baytları
     private boolean ended;
+    private String globalCommitSha;
 
     TarArchiveReader(InputStream in) {
         this.in = in;
@@ -51,7 +52,7 @@ final class TarArchiveReader implements Closeable {
             if (type == 'x') {
                 String pax = new String(readExact(size), StandardCharsets.UTF_8);
                 skip(alignPadding(size));
-                String p = parsePaxPath(pax);
+                String p = parsePaxValue(pax, "path");
                 if (p != null) {
                     paxPath = p;
                 }
@@ -59,7 +60,13 @@ final class TarArchiveReader implements Closeable {
                 longName = cString(readExact(size));
                 skip(alignPadding(size));
             } else if (type == 'g') {
-                skip(size + alignPadding(size));
+                // GitHub arşivlerinde "comment=<40 haneli commit sha>" bulunur
+                String pax = new String(readExact(size), StandardCharsets.UTF_8);
+                skip(alignPadding(size));
+                String comment = parsePaxValue(pax, "comment");
+                if (comment != null && comment.matches("[0-9a-fA-F]{40}")) {
+                    globalCommitSha = comment.toLowerCase();
+                }
             } else if (type == '0' || type == 0) {
                 String name = cString(Arrays.copyOfRange(header, 0, 100));
                 boolean ustar = header[257] == 'u' && header[258] == 's' && header[259] == 't';
@@ -77,6 +84,11 @@ final class TarArchiveReader implements Closeable {
                 paxPath = null;
             }
         }
+    }
+
+    /** Genel PAX başlığından okunan commit sha; yoksa {@code null}. */
+    String globalCommitSha() {
+        return globalCommitSha;
     }
 
     /** Mevcut girdinin tamamını okur (çağıran boyutu önceden sınırlamalıdır). */
@@ -166,7 +178,7 @@ final class TarArchiveReader implements Closeable {
     }
 
     /** PAX kayıtları: "<uzunluk> <anahtar>=<değer>\n" */
-    private static String parsePaxPath(String pax) {
+    private static String parsePaxValue(String pax, String key) {
         int pos = 0;
         while (pos < pax.length()) {
             int space = pax.indexOf(' ', pos);
@@ -188,8 +200,8 @@ final class TarArchiveReader implements Closeable {
                 end = pax.length();
             }
             String record = pax.substring(space + 1, end);
-            if (record.startsWith("path=")) {
-                return record.substring(5);
+            if (record.startsWith(key + "=")) {
+                return record.substring(key.length() + 1);
             }
             pos = end + 1;
         }
