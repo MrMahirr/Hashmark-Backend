@@ -17,7 +17,7 @@ import java.util.Set;
 public class DebtService {
 
     public static final int MAX_EXPORT_ROWS = 50_000;
-    private static final Set<String> TRIAGE_STATUSES = Set.of("OPEN", "IGNORED", "WONT_FIX");
+    private static final Set<String> TRIAGE_STATUSES = Set.of("OPEN", "IGNORED", "WONT_FIX", "RESOLVED");
     private static final int MAX_ASSIGNEE_LENGTH = 100;
 
     private final DebtRepository debtRepository;
@@ -41,7 +41,7 @@ public class DebtService {
         if (request.getStatus() != null) {
             status = request.getStatus().trim().toUpperCase(Locale.ROOT);
             if (!TRIAGE_STATUSES.contains(status)) {
-                throw ApiException.badRequest("status must be one of OPEN, IGNORED, WONT_FIX");
+                throw ApiException.badRequest("status must be one of OPEN, IGNORED, WONT_FIX, RESOLVED");
             }
         }
         String assignee = request.getAssignee();

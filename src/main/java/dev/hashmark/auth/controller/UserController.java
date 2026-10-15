@@ -8,7 +8,10 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import dev.hashmark.repo.repository.RepoRepository;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -18,9 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController {
 
     private final UserRepository userRepository;
+    private final RepoRepository repoRepository;
 
-    public UserController(UserRepository userRepository) {
+    public UserController(UserRepository userRepository, RepoRepository repoRepository) {
         this.userRepository = userRepository;
+        this.repoRepository = repoRepository;
     }
 
     @GetMapping("/me")
@@ -34,9 +39,22 @@ public class UserController {
                 .email(user.getEmail())
                 .githubLogin(user.getGithubLogin())
                 .avatarUrl(user.getAvatarUrl())
+                .githubConnected(user.getGithubToken() != null && !user.getGithubToken().isBlank())
                 .createdAt(user.getCreatedAt())
                 .build();
 
         return ResponseEntity.ok(dto);
+    }
+
+    @DeleteMapping("/github-connection")
+    @Operation(summary = "GitHub baglantisini kes (erisim jetonunu sil; deleteData=true ise depo ve borclari da sil)")
+    public ResponseEntity<Void> disconnectGithub(@AuthenticationPrincipal Long userId,
+                                                 @RequestParam(defaultValue = "false") boolean deleteData) {
+        userRepository.findById(userId).orElseThrow(() -> ApiException.unauthorized("User not found"));
+        userRepository.clearGithubToken(userId);
+        if (deleteData) {
+            repoRepository.deleteAllByUserId(userId);
+        }
+        return ResponseEntity.noContent().build();
     }
 }

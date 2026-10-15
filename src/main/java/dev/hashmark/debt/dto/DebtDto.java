@@ -22,6 +22,8 @@ public class DebtDto {
     private String content;
     private LocalDateTime detectedAt;
     private LocalDateTime resolvedAt;
+    /** Kullanıcı "çözüldü" işaretledi (sonraki tarama kodu hâlâ görürse yeniden açılır). */
+    private Boolean manuallyResolved;
 
     /** Taramada son görüldüğü commit; permalink bu commit'e işaret eder. */
     private String commitSha;

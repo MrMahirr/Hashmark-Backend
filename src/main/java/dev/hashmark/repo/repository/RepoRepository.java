@@ -28,16 +28,17 @@ public class RepoRepository {
             .createdAt(rs.getTimestamp("created_at").toLocalDateTime())
             .trackedBranch(rs.getString("tracked_branch"))
             .lastScannedSha(rs.getString("last_scanned_sha"))
+            .tracked(rs.getBoolean("tracked"))
             .build();
 
     public List<Repo> findAllByUserId(Long userId) {
-        String sql = "SELECT * FROM repos WHERE user_id = ? ORDER BY full_name ASC";
+        String sql = "SELECT * FROM repos WHERE user_id = ? AND tracked ORDER BY full_name ASC";
         return jdbcTemplate.query(sql, repoRowMapper, userId);
     }
 
     public List<Repo> findAllByUserIdWithDebtCount(Long userId) {
         String sql = "SELECT r.*, (SELECT COUNT(*) FROM debts d WHERE d.repo_id = r.id AND d.resolved_at IS NULL AND d.triage_status = 'OPEN') as debt_count " +
-                     "FROM repos r WHERE r.user_id = ? ORDER BY r.full_name ASC";
+                     "FROM repos r WHERE r.user_id = ? AND r.tracked ORDER BY r.full_name ASC";
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
             Repo repo = repoRowMapper.mapRow(rs, rowNum);
             if (repo != null) {
@@ -54,7 +55,7 @@ public class RepoRepository {
 
     public Optional<Repo> findByIdAndUserIdWithDebtCount(Long id, Long userId) {
         String sql = "SELECT r.*, (SELECT COUNT(*) FROM debts d WHERE d.repo_id = r.id AND d.resolved_at IS NULL AND d.triage_status = 'OPEN') as debt_count " +
-                     "FROM repos r WHERE r.id = ? AND r.user_id = ?";
+                     "FROM repos r WHERE r.id = ? AND r.user_id = ? AND r.tracked";
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
             Repo repo = repoRowMapper.mapRow(rs, rowNum);
             if (repo != null) {
@@ -65,8 +66,9 @@ public class RepoRepository {
     }
 
     public Repo save(Repo repo) {
-        String sql = "INSERT INTO repos (user_id, github_repo_id, full_name, private) " +
-                     "VALUES (?, ?, ?, ?) " +
+        // Yeni depo aday olarak gelir (tracked = FALSE); mevcut kaydın tracked değeri korunur.
+        String sql = "INSERT INTO repos (user_id, github_repo_id, full_name, private, tracked) " +
+                     "VALUES (?, ?, ?, ?, FALSE) " +
                      "ON CONFLICT (user_id, github_repo_id) DO UPDATE " +
                      "SET full_name = EXCLUDED.full_name, private = EXCLUDED.private " +
                      "RETURNING *";
@@ -79,6 +81,37 @@ public class RepoRepository {
                 repo.getFullName(),
                 repo.getIsPrivate()
         );
+    }
+
+    /** Henüz izlenmeyen (GitHub'dan gelen) depolar. */
+    public List<Repo> findCandidatesByUserId(Long userId) {
+        return jdbcTemplate.query("SELECT * FROM repos WHERE user_id = ? AND NOT tracked ORDER BY full_name ASC",
+                repoRowMapper, userId);
+    }
+
+    /** Depoyu izlemeye alır; kullanıcıya ait değilse 0 döner. */
+    public int markTracked(Long id, Long userId) {
+        return jdbcTemplate.update("UPDATE repos SET tracked = TRUE WHERE id = ? AND user_id = ?", id, userId);
+    }
+
+    /** Kullanıcının tüm depoları ve bağlı borç/iş kayıtları (FK cascade). */
+    public int deleteAllByUserId(Long userId) {
+        return jdbcTemplate.update("DELETE FROM repos WHERE user_id = ?", userId);
+    }
+
+    /** Kullanıcının izlenen depoları için açık borçların etiket kırılımı: depo -> (etiket -> sayı). */
+    public java.util.Map<Long, java.util.Map<String, Integer>> findOpenBreakdownByUserId(Long userId) {
+        java.util.Map<Long, java.util.Map<String, Integer>> result = new java.util.HashMap<>();
+        jdbcTemplate.query(
+                "SELECT d.repo_id, d.label, COUNT(*) AS n FROM debts d JOIN repos r ON r.id = d.repo_id " +
+                "WHERE r.user_id = ? AND r.tracked AND d.resolved_at IS NULL AND d.triage_status = 'OPEN' " +
+                "GROUP BY d.repo_id, d.label",
+                rs -> {
+                    result.computeIfAbsent(rs.getLong("repo_id"), k -> new java.util.LinkedHashMap<>())
+                            .put(rs.getString("label"), rs.getInt("n"));
+                },
+                userId);
+        return result;
     }
 
     public void deleteByIdAndUserId(Long id, Long userId) {

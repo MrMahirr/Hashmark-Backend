@@ -24,6 +24,9 @@ public class ScanService {
     public ScanStartResponse startScan(Long repoId, Long userId) {
         Repo repo = repoRepository.findByIdAndUserId(repoId, userId)
                 .orElseThrow(() -> ApiException.notFound("Repo not found or not owned by user"));
+        if (!Boolean.TRUE.equals(repo.getTracked())) {
+            throw ApiException.badRequest("Repository is not tracked; add it first");
+        }
 
         ScanJob job;
         try {

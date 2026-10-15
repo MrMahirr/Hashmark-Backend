@@ -32,9 +32,18 @@ jwt:
 encryption:
   secret: ${ENCRYPTION_SECRET}
 
-resend:
-  api-key: ${RESEND_API_KEY:placeholder}
-  from-email: ${RESEND_FROM_EMAIL:noreply@hashmark.dev}
+# E-posta: Brevo işlemsel API (https://app.brevo.com -> SMTP & API -> API Keys).
+# Gönderici adresi Brevo'da doğrulanmış olmalıdır.
+brevo:
+  api-key: ${BREVO_API_KEY:}
+  sender-email: ${BREVO_SENDER_EMAIL:noreply@hashmark.dev}
+  sender-name: ${BREVO_SENDER_NAME:Hashmark}
+
+app:
+  url: ${APP_URL:http://localhost:3000}
+
+report:
+  timezone: ${REPORT_TIMEZONE:Europe/Istanbul}
 
 async:
   core-pool-size: 2

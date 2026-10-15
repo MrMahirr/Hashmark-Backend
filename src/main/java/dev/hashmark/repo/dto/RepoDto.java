@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Data
 @Builder
@@ -22,4 +23,7 @@ public class RepoDto {
     private Integer debtCount;
     private String trackedBranch;
     private String lastScannedSha;
+    private Boolean tracked;
+    /** Açık borçların etiket kırılımı: {"TODO": 4, "FIXME": 1}. */
+    private Map<String, Integer> debtBreakdown;
 }

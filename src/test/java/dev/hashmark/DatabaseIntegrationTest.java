@@ -474,6 +474,106 @@ class DatabaseIntegrationTest {
         assertFalse(reports.getTopModules(userId, null).stream().anyMatch(m -> "lib".equals(m.getModulePath())));
     }
 
+    @Test
+    void manuallyResolvedDebtIsReopenedWhenCodeIsStillThere() {
+        migrateAll();
+        scan("a".repeat(40), List.of(debt("A.java", 3, "TODO", "still here")));
+        long id = ((Number) row("A.java", "TODO", "still here").get("id")).longValue();
+
+        debts.updateTriage(userId, id, "RESOLVED", null);
+        Map<String, Object> resolved = row("A.java", "TODO", "still here");
+        assertNotNull(resolved.get("resolved_at"));
+        assertEquals(true, resolved.get("manually_resolved"));
+        assertEquals("OPEN", resolved.get("triage_status"));
+
+        // Kod hâlâ duruyor: sonraki tarama yeniden açar ve bunu bildirir
+        ReplaceResult again = scan("b".repeat(40), List.of(debt("A.java", 3, "TODO", "still here")));
+        Map<String, Object> reopened = row("A.java", "TODO", "still here");
+        assertNull(reopened.get("resolved_at"));
+        assertEquals(false, reopened.get("manually_resolved"));
+        assertEquals(1, again.reopened());
+    }
+
+    @Test
+    void manuallyResolvedDebtStaysResolvedWhenCodeIsGone() {
+        migrateAll();
+        scan("a".repeat(40), List.of(debt("A.java", 3, "TODO", "temp")));
+        long id = ((Number) row("A.java", "TODO", "temp").get("id")).longValue();
+        debts.updateTriage(userId, id, "RESOLVED", null);
+
+        ReplaceResult next = scan("b".repeat(40), List.of());
+        assertNotNull(row("A.java", "TODO", "temp").get("resolved_at"));
+        assertEquals(0, next.reopened());
+    }
+
+    @Test
+    void reopenClearsManualResolveButNotScanResolve() {
+        migrateAll();
+        scan("a".repeat(40), List.of(debt("A.java", 1, "TODO", "manual"), debt("B.java", 1, "TODO", "gone")));
+        long manual = ((Number) row("A.java", "TODO", "manual").get("id")).longValue();
+        long gone = ((Number) row("B.java", "TODO", "gone").get("id")).longValue();
+
+        debts.updateTriage(userId, manual, "RESOLVED", null);
+        scan("b".repeat(40), List.of(debt("A.java", 1, "TODO", "manual"))); // gone çözülür, manual yeniden açılır
+        debts.updateTriage(userId, manual, "RESOLVED", null);
+
+        debts.updateTriage(userId, manual, "OPEN", null);
+        debts.updateTriage(userId, gone, "OPEN", null);
+
+        assertNull(row("A.java", "TODO", "manual").get("resolved_at"), "elle çözülen geri açılmalı");
+        assertNotNull(row("B.java", "TODO", "gone").get("resolved_at"), "tarama çözümü korunmalı");
+    }
+
+    @Test
+    void repoTrackingFlagAndBreakdown() {
+        migrateAll();
+        var repos = new dev.hashmark.repo.repository.RepoRepository(jdbc);
+
+        // Mevcut (test tohumu) depo izleniyor sayılır
+        assertEquals(1, repos.findAllByUserIdWithDebtCount(userId).size());
+
+        // Senkronla gelen yeni depo aday olur
+        var candidate = repos.save(dev.hashmark.repo.model.Repo.builder()
+                .userId(userId).githubRepoId("gh-new").fullName("o/new").isPrivate(false).build());
+        assertEquals(false, candidate.getTracked());
+        assertEquals(1, repos.findCandidatesByUserId(userId).size());
+        assertEquals(1, repos.findAllByUserIdWithDebtCount(userId).size());
+
+        assertEquals(1, repos.markTracked(candidate.getId(), userId));
+        assertEquals(2, repos.findAllByUserIdWithDebtCount(userId).size());
+        assertEquals(0, repos.markTracked(candidate.getId(), userId + 999), "başkasının deposu izlenemez");
+
+        // Yeniden senkron mevcut tracked değerini bozmaz
+        repos.save(dev.hashmark.repo.model.Repo.builder()
+                .userId(userId).githubRepoId("gh-new").fullName("o/new").isPrivate(false).build());
+        assertEquals(0, repos.findCandidatesByUserId(userId).size());
+
+        scan("a".repeat(40), List.of(debt("A.java", 1, "TODO", "a"), debt("A.java", 2, "FIXME", "b"),
+                debt("A.java", 3, "TODO", "c")));
+        Map<String, Integer> breakdown = repos.findOpenBreakdownByUserId(userId).get(repoId);
+        assertEquals(2, breakdown.get("TODO"));
+        assertEquals(1, breakdown.get("FIXME"));
+    }
+
+    @Test
+    void digestSettingsRoundTripAndRecipients() {
+        migrateAll();
+        var settings = new dev.hashmark.settings.repository.UserSettingsRepository(jdbc);
+        var saved = settings.save(dev.hashmark.settings.model.UserSettings.builder()
+                .userId(userId).emailNotify(true).notifyDay("FRIDAY")
+                .digestLabels("TODO,FIXME").digestEmail("team@example.com").build());
+        assertEquals("TODO,FIXME", saved.getDigestLabels());
+        assertEquals("team@example.com", saved.getDigestEmail());
+
+        LocalDate friday = LocalDate.of(2026, 10, 16);
+        assertEquals(1, settings.findDigestRecipients("FRIDAY", friday).size());
+        assertEquals(0, settings.findDigestRecipients("MONDAY", friday).size());
+
+        settings.markDigestSent(userId, friday);
+        assertEquals(0, settings.findDigestRecipients("FRIDAY", friday).size(), "aynı gün ikinci kez gönderilmez");
+        assertEquals(1, settings.findDigestRecipients("FRIDAY", friday.plusWeeks(1)).size());
+    }
+
     private void insertSnapshot(long repo, LocalDate day, int total, int added, int resolved) {
         jdbc.update("INSERT INTO scan_snapshots (repo_id, taken_at, total_open, added, resolved) VALUES (?, ?, ?, ?, ?)",
                 repo, Timestamp.valueOf(day.atTime(12, 0)), total, added, resolved);

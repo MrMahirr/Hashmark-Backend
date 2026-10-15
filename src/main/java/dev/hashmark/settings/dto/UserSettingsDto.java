@@ -5,6 +5,12 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
+/**
+ * GET/PUT /settings. PUT'ta gönderilmeyen (null) alanlar değişmez;
+ * {@code digestLabels} boş liste = tüm etiketler, {@code digestEmail} boş string = GitHub e-postası.
+ */
 @Data
 @Builder
 @NoArgsConstructor
@@ -12,4 +18,6 @@ import lombok.NoArgsConstructor;
 public class UserSettingsDto {
     private Boolean emailNotify;
     private String notifyDay;
+    private List<String> digestLabels;
+    private String digestEmail;
 }

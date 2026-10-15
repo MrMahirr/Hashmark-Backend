@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Data
 @Builder
@@ -21,7 +22,11 @@ public class Repo {
     private LocalDateTime createdAt;
     private String trackedBranch;
     private String lastScannedSha;
+    /** İzlenen (taranan) depo mu; false = yalnızca GitHub'dan gelen aday. */
+    private Boolean tracked;
     
     // Transient / calculated field
     private Integer debtCount;
+    /** Açık borçların etiket kırılımı (yalnızca liste/ayrıntı uçlarında dolar). */
+    private Map<String, Integer> debtBreakdown;
 }

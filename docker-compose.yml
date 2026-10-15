@@ -57,8 +57,11 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
-      - RESEND_API_KEY=${RESEND_API_KEY:-placeholder}
-      - RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:-noreply@hashmark.dev}
+      - BREVO_API_KEY=${BREVO_API_KEY:-}
+      - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL:-noreply@hashmark.dev}
+      - BREVO_SENDER_NAME=${BREVO_SENDER_NAME:-Hashmark}
+      - APP_URL=${APP_URL:-http://localhost:3000}
+      - REPORT_TIMEZONE=${REPORT_TIMEZONE:-Europe/Istanbul}
     networks:
       - hashmark-network
     healthcheck:

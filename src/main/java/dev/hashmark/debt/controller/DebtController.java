@@ -1,10 +1,12 @@
 package dev.hashmark.debt.controller;
 
+import dev.hashmark.debt.dto.DebtContextDto;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.dto.DebtFilterRequest;
 import dev.hashmark.debt.dto.DebtStatsDto;
 import dev.hashmark.debt.dto.DebtTriageRequest;
 import dev.hashmark.debt.dto.PageResponse;
+import dev.hashmark.debt.service.DebtContextService;
 import dev.hashmark.debt.service.DebtExportService.ExportFile;
 import dev.hashmark.debt.service.DebtService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,9 +26,11 @@ import org.springframework.web.bind.annotation.*;
 public class DebtController {
 
     private final DebtService debtService;
+    private final DebtContextService debtContextService;
 
-    public DebtController(DebtService debtService) {
+    public DebtController(DebtService debtService, DebtContextService debtContextService) {
         this.debtService = debtService;
+        this.debtContextService = debtContextService;
     }
 
     @GetMapping
@@ -57,6 +61,16 @@ public class DebtController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment().filename(file.filename()).build().toString())
                 .body(file.content());
+    }
+
+    @GetMapping("/{id}/context")
+    @Operation(summary = "Borcun cevresindeki kaynak kodu (±radius satir, 1-30; varsayilan 5)")
+    public DebtContextDto getContext(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id,
+            @RequestParam(required = false) Integer radius
+    ) {
+        return debtContextService.getContext(userId, id, radius);
     }
 
     @PatchMapping("/{id}")

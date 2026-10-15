@@ -140,8 +140,10 @@ nano .env
 | `CORS_ALLOWED_ORIGINS` | Frontend origin | `https://hashmark.yunusemremahir.com.tr` |
 | `NEXT_PUBLIC_API_URL` | Frontend API URL | `https://hashmark.yunusemremahir.com.tr/api/v1` |
 | `NEXT_PUBLIC_APP_URL` | Frontend URL | `https://hashmark.yunusemremahir.com.tr` |
-| `RESEND_API_KEY` | E-posta API key | Resend dashboard'dan |
-| `RESEND_FROM_EMAIL` | Gönderici e-posta | `noreply@hashmark.dev` |
+| `BREVO_API_KEY` | E-posta API key | Brevo: SMTP & API > API Keys |
+| `BREVO_SENDER_EMAIL` | Gönderici e-posta (Brevo'da doğrulanmış) | `noreply@hashmark.dev` |
+| `BREVO_SENDER_NAME` | Gönderici adı | `Hashmark` |
+| `APP_URL` | E-postadaki panel bağlantısı için genel adres | `https://hashmark.example.com` |
 
 ### Secret üretimi:
 
