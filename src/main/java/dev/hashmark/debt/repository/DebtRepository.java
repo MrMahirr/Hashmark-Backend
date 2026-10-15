@@ -9,14 +9,18 @@ import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 @Repository
 public class DebtRepository {
+
+    private static final int SAVE_BATCH_SIZE = 1000;
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -36,9 +40,50 @@ public class DebtRepository {
             .resolvedAt(rs.getTimestamp("resolved_at") != null ? rs.getTimestamp("resolved_at").toLocalDateTime() : null)
             .build();
 
-    public void markAllAsResolvedForRepo(Long repoId) {
-        String sql = "UPDATE debts SET resolved_at = NOW() WHERE repo_id = ? AND resolved_at IS NULL";
-        jdbcTemplate.update(sql, repoId);
+    /**
+     * Tarama sonucunu tek transaction'da uygular: önce borçlar çözülmüş işaretlenir, sonra bulunanlar
+     * yeniden açılır/eklenir. Böylece yarıda kalan bir işlem tüm borçları "çözüldü" bırakmaz.
+     *
+     * @param onlyPaths    {@code null} değilse yalnızca bu dosyalardaki borçlar çözülür (kısmi tarama)
+     * @param excludePaths {@code null} değilse bu dosyalardaki borçlar çözülmez (okunamayan dosyalar)
+     */
+    @Transactional
+    public void replaceForRepo(Long repoId, List<Debt> debts, Collection<String> onlyPaths,
+                               Collection<String> excludePaths) {
+        resolveOpenDebts(repoId, onlyPaths, excludePaths);
+        saveAll(repoId, debts);
+    }
+
+    private void resolveOpenDebts(Long repoId, Collection<String> onlyPaths, Collection<String> excludePaths) {
+        StringBuilder sql = new StringBuilder(
+                "UPDATE debts SET resolved_at = NOW() WHERE repo_id = ? AND resolved_at IS NULL");
+        List<Object> params = new ArrayList<>();
+        params.add(repoId);
+
+        if (onlyPaths != null) {
+            if (onlyPaths.isEmpty()) {
+                return;
+            }
+            sql.append(" AND file_path = ANY (?)");
+            params.add(onlyPaths.toArray(new String[0]));
+        }
+        if (excludePaths != null && !excludePaths.isEmpty()) {
+            sql.append(" AND file_path <> ALL (?)");
+            params.add(excludePaths.toArray(new String[0]));
+        }
+
+        jdbcTemplate.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(sql.toString());
+            for (int i = 0; i < params.size(); i++) {
+                Object param = params.get(i);
+                if (param instanceof String[] array) {
+                    ps.setArray(i + 1, connection.createArrayOf("text", array));
+                } else {
+                    ps.setObject(i + 1, param);
+                }
+            }
+            return ps;
+        });
     }
 
     public void saveAll(Long repoId, List<Debt> debts) {
@@ -47,24 +92,27 @@ public class DebtRepository {
         String sql = "INSERT INTO debts (repo_id, file_path, line_no, label, content) " +
                      "VALUES (?, ?, ?, ?, ?) " +
                      "ON CONFLICT (repo_id, file_path, line_no) DO UPDATE " +
-                     "SET content = EXCLUDED.content, resolved_at = NULL";
+                     "SET label = EXCLUDED.label, content = EXCLUDED.content, resolved_at = NULL";
 
-        jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
-            @Override
-            public void setValues(PreparedStatement ps, int i) throws SQLException {
-                Debt debt = debts.get(i);
-                ps.setLong(1, repoId);
-                ps.setString(2, debt.getFilePath());
-                ps.setInt(3, debt.getLineNo());
-                ps.setString(4, debt.getLabel());
-                ps.setString(5, debt.getContent());
-            }
+        for (int from = 0; from < debts.size(); from += SAVE_BATCH_SIZE) {
+            List<Debt> chunk = debts.subList(from, Math.min(from + SAVE_BATCH_SIZE, debts.size()));
+            jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
+                @Override
+                public void setValues(PreparedStatement ps, int i) throws SQLException {
+                    Debt debt = chunk.get(i);
+                    ps.setLong(1, repoId);
+                    ps.setString(2, debt.getFilePath());
+                    ps.setInt(3, debt.getLineNo());
+                    ps.setString(4, debt.getLabel());
+                    ps.setString(5, debt.getContent());
+                }
 
-            @Override
-            public int getBatchSize() {
-                return debts.size();
-            }
-        });
+                @Override
+                public int getBatchSize() {
+                    return chunk.size();
+                }
+            });
+        }
     }
 
     public PageResponse<DebtDto> findByFilter(Long userId, DebtFilterRequest filter) {

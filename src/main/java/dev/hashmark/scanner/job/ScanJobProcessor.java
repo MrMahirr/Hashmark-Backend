@@ -12,6 +12,7 @@ import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
+import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -51,38 +52,53 @@ public class ScanJobProcessor {
             String plainToken = aesEncryptionUtil.decrypt(user.getGithubToken());
             Repo repo = repoRepository.findByIdAndUserId(repoId, userId).orElseThrow(() -> ApiException.notFound("Repo not found"));
 
-            List<String> filePaths = gitHubFileService.listRepoFiles(repo.getFullName(), plainToken);
-
             List<Debt> allDebts = new ArrayList<>();
 
-            for (String filePath : filePaths) {
-                try {
-                    String content = gitHubFileService.getFileContent(repo.getFullName(), filePath, plainToken);
-                    List<DebtDto> parsedDebts = debtParserService.parse(content, filePath);
+            ScanResult result = gitHubFileService.scanRepository(
+                    repo.getFullName(),
+                    plainToken,
+                    (path, content) -> {
+                        for (DebtDto dto : debtParserService.parse(content, path)) {
+                            allDebts.add(Debt.builder()
+                                    .repoId(repoId)
+                                    .filePath(dto.getFilePath())
+                                    .lineNo(dto.getLineNo())
+                                    .label(dto.getLabel())
+                                    .content(dto.getContent())
+                                    .build());
+                        }
+                    },
+                    processed -> scanJobRepository.updateProgress(jobId, processed));
 
-                    for (DebtDto dto : parsedDebts) {
-                        allDebts.add(Debt.builder()
-                                .repoId(repoId)
-                                .filePath(dto.getFilePath())
-                                .lineNo(dto.getLineNo())
-                                .label(dto.getLabel())
-                                .content(dto.getContent())
-                                .build());
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to process file: " + filePath, e);
-                }
-            }
+            // Kısmi taramada yalnızca gerçekten taranan dosyaların borçları çözülür;
+            // okunamayan veya çok büyük dosyaların borçları ise açık bırakılır.
+            debtRepository.replaceForRepo(
+                    repoId,
+                    allDebts,
+                    result.truncated() ? result.scannedPaths() : null,
+                    result.keepOpenPaths());
 
-            debtRepository.markAllAsResolvedForRepo(repoId);
-            debtRepository.saveAll(repoId, allDebts);
-
-            scanJobRepository.updateStatus(jobId, "DONE", allDebts.size());
+            scanJobRepository.complete(jobId, "DONE", allDebts.size(), result.scanned(), result.skipped(),
+                    result.failed(), buildMessage(result));
             repoRepository.updateLastScannedAt(repoId, LocalDateTime.now());
 
+        } catch (ApiException e) {
+            log.warn("Scan failed for repo {}: {}", repoId, e.getMessage());
+            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, e.getMessage());
         } catch (Exception e) {
             log.error("Scan failed for repo: " + repoId, e);
-            scanJobRepository.updateStatus(jobId, "FAILED", 0);
+            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, "Unexpected error while scanning");
         }
+    }
+
+    private String buildMessage(ScanResult result) {
+        List<String> parts = new ArrayList<>();
+        if (result.truncated()) {
+            parts.add("Partial scan: " + result.truncationReason());
+        }
+        if (result.failed() > 0) {
+            parts.add(result.failed() + " file(s) could not be processed");
+        }
+        return parts.isEmpty() ? null : String.join("; ", parts);
     }
 }

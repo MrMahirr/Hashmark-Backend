@@ -18,5 +18,9 @@ public class ScanJob {
     private LocalDateTime startedAt;
     private LocalDateTime finishedAt;
     private Integer debtFound;
+    private Integer filesScanned;
+    private Integer filesSkipped;
+    private Integer filesFailed;
+    private String message;
     private LocalDateTime createdAt;
 }

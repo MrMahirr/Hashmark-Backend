@@ -30,4 +30,20 @@ public class ApiException extends RuntimeException {
     public static ApiException forbidden(String message) {
         return new ApiException(HttpStatus.FORBIDDEN, message);
     }
+
+    public static ApiException conflict(String message) {
+        return new ApiException(HttpStatus.CONFLICT, message);
+    }
+
+    public static ApiException tooManyRequests(String message) {
+        return new ApiException(HttpStatus.TOO_MANY_REQUESTS, message);
+    }
+
+    public static ApiException serviceUnavailable(String message) {
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, message);
+    }
+
+    public static ApiException badGateway(String message) {
+        return new ApiException(HttpStatus.BAD_GATEWAY, message);
+    }
 }

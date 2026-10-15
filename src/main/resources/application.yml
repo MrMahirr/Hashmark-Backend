@@ -40,3 +40,11 @@ async:
   core-pool-size: 2
   max-pool-size: 5
   queue-capacity: 50
+
+scan:
+  max-file-size-bytes: 1048576      # bundan büyük dosyalar atlanır
+  max-files: 20000                  # tek taramada işlenecek en fazla dosya
+  max-duration-seconds: 900         # tek taramanın en uzun süresi
+  stale-job-minutes: 30             # bu süreden uzun RUNNING işler başarısız sayılır
+  max-rate-limit-wait-seconds: 60   # GitHub limiti için beklenebilecek en uzun süre
+  excluded-dirs: node_modules,vendor,dist,build,out,target,.git,.next,.nuxt,.gradle,.idea,.vscode,coverage,__pycache__,.venv,venv,site-packages,bower_components,Pods,third_party,third-party
