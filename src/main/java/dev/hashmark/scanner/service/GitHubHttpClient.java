@@ -27,15 +27,15 @@ public class GitHubHttpClient {
     private static final Logger log = LoggerFactory.getLogger(GitHubHttpClient.class);
     private static final int MAX_ATTEMPTS = 4;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
-
+    private final HttpClient httpClient;
     private final ScanProperties properties;
 
     public GitHubHttpClient(ScanProperties properties) {
         this.properties = properties;
+        this.httpClient = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .connectTimeout(Duration.ofMillis(properties.getHttpConnectTimeoutMs()))
+                .build();
     }
 
     public String apiUrl() {
@@ -43,7 +43,9 @@ public class GitHubHttpClient {
     }
 
     public HttpRequest.Builder request(URI uri, String token) {
+        // timeout: yanıt başlıkları gelene kadar geçen süre. Gövde akışı tarama süresi sınırıyla korunur.
         return HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofMillis(properties.getHttpResponseTimeoutMs()))
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", "2022-11-28")

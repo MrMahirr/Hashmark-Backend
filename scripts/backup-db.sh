@@ -24,12 +24,13 @@ fi
 
 DB_NAME="${POSTGRES_DB:-hashmark}"
 DB_USER="${POSTGRES_USER:-hashmark}"
+DB_CONTAINER="${DB_CONTAINER:-hashmark_postgres}"
 
 echo "Veritabanı yedeği alınıyor: $DB_NAME"
 echo "Hedef: $BACKUP_FILE"
 
 # Docker üzerinden pg_dump
-docker exec hashmark_postgres pg_dump \
+docker exec "$DB_CONTAINER" pg_dump \
     -U "$DB_USER" \
     -d "$DB_NAME" \
     --no-owner \

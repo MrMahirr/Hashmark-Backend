@@ -19,21 +19,6 @@ services:
       retries: 5
       start_period: 10s
 
-  # === Redis ===
-  redis:
-    image: redis:7-alpine
-    container_name: hashmark_redis
-    restart: unless-stopped
-    volumes:
-      - redis_data:/data
-    networks:
-      - hashmark-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # === Backend (Spring Boot) ===
   backend:
     build:
@@ -41,10 +26,17 @@ services:
       dockerfile: Dockerfile
     container_name: hashmark_backend
     restart: unless-stopped
+    # Kaynak sınırı: JVM -XX:MaxRAMPercentage=75 bu sınırı görür (OOM-kill yerine kontrollü heap).
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     environment:
       - SERVER_PORT=8080
@@ -66,6 +58,8 @@ services:
       - RATE_LIMIT_AUTH_PER_MINUTE=${RATE_LIMIT_AUTH_PER_MINUTE:-30}
       - RATE_LIMIT_SCAN_PER_MINUTE=${RATE_LIMIT_SCAN_PER_MINUTE:-10}
       - GITHUB_OAUTH_SCOPE=${GITHUB_OAUTH_SCOPE:-repo,user:email}
+      - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-15}
+      - DB_POOL_MIN_IDLE=${DB_POOL_MIN_IDLE:-5}
     networks:
       - hashmark-network
     healthcheck:
@@ -77,8 +71,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  redis_data:
     driver: local
 
 networks:

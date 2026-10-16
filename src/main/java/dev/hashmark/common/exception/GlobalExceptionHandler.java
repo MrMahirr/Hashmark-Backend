@@ -53,6 +53,24 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
     }
 
+    /** Async havuz/kuyruk dolu: iç hata (500) yerine istemciye "sonra tekrar dene" döner. */
+    @ExceptionHandler({
+            java.util.concurrent.RejectedExecutionException.class,
+            org.springframework.core.task.TaskRejectedException.class
+    })
+    public ResponseEntity<ErrorResponse> handleOverloaded(Exception ex) {
+        org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class).warn("Async havuz dolu, istek reddedildi");
+        ErrorResponse errorResponse = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(),
+                "Server is busy, please try again shortly"
+        );
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "5")
+                .body(errorResponse);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
         // Ayrıntı yalnızca günlükte kalır; istemciye iç hata mesajı sızdırılmaz.

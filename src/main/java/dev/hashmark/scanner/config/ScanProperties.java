@@ -15,6 +15,10 @@ public class ScanProperties {
     private int maxFiles = 20_000;
     private long maxDurationSeconds = 900;
     private long maxRateLimitWaitSeconds = 60;
+    /** GitHub'a bağlantı kurma zaman aşımı. */
+    private long httpConnectTimeoutMs = 3_000;
+    /** GitHub'dan yanıt başlıklarının gelmesi için zaman aşımı (gövde akışı hariç). */
+    private long httpResponseTimeoutMs = 10_000;
     private String githubApiUrl = "https://api.github.com";
 
     /** Aynı anda çalışacak tarama sayısı (bu instance için). */

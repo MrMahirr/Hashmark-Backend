@@ -23,12 +23,12 @@ https://hashmark.yunusemremahir.com.tr
    ┌─────▼─────┐   ┌─────▼──────────┐
    │  Frontend  │   │    Backend     │
    │  :3000     │   │    :8080       │
-   └────────────┘   └──┬──────────┬──┘
-                       │          │
-              ┌────────▼──┐  ┌───▼──────┐
-              │ PostgreSQL │  │  Redis   │
-              │ :5432      │  │  :6379   │
-              └────────────┘  └──────────┘
+   └────────────┘   └────────┬───────┘
+                       │
+              ┌────────▼──┐
+              │ PostgreSQL │
+              │ :5432      │
+              └────────────┘
 ```
 
 **Tüm servisler Docker internal network üzerindedir. Sadece Nginx 80/443 portlarını host'a açar.**
@@ -83,7 +83,7 @@ sudo ufw allow 443/tcp   # HTTPS
 sudo ufw enable
 ```
 
-> **ÖNEMLİ:** 5432 (PostgreSQL), 6379 (Redis), 8080 (Backend), 3000 (Frontend) portları **kapalı** kalmalıdır.
+> **ÖNEMLİ:** 5432 (PostgreSQL), 8080 (Backend), 3000 (Frontend) portları **kapalı** kalmalıdır.
 
 ---
 
