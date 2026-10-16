@@ -3,6 +3,7 @@ package dev.hashmark.auth.controller;
 import dev.hashmark.auth.dto.UserProfileDto;
 import dev.hashmark.auth.model.User;
 import dev.hashmark.auth.repository.UserRepository;
+import dev.hashmark.auth.service.AuthService;
 import dev.hashmark.common.exception.ApiException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -23,9 +24,12 @@ public class UserController {
     private final UserRepository userRepository;
     private final RepoRepository repoRepository;
 
-    public UserController(UserRepository userRepository, RepoRepository repoRepository) {
+    private final AuthService authService;
+
+    public UserController(UserRepository userRepository, RepoRepository repoRepository, AuthService authService) {
         this.userRepository = userRepository;
         this.repoRepository = repoRepository;
+        this.authService = authService;
     }
 
     @GetMapping("/me")
@@ -55,6 +59,15 @@ public class UserController {
         if (deleteData) {
             repoRepository.deleteAllByUserId(userId);
         }
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/account")
+    @Operation(summary = "Hesabi ve tum verileri kalici olarak sil (KVKK/GDPR)")
+    public ResponseEntity<Void> deleteAccount(@AuthenticationPrincipal Long userId) {
+        userRepository.findById(userId).orElseThrow(() -> ApiException.unauthorized("User not found"));
+        authService.revokeAllSessions(userId);
+        userRepository.deleteById(userId);
         return ResponseEntity.noContent().build();
     }
 }

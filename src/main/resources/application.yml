@@ -1,5 +1,7 @@
 server:
   port: ${SERVER_PORT:8080}
+  # Ters vekil (nginx) arkasında gerçek istemci IP'sini X-Forwarded-For'dan çözer (rate limit için).
+  forward-headers-strategy: native
 
 spring:
   config:
@@ -13,16 +15,26 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+# Swagger prod'da kapalıdır; geliştirmede SWAGGER_ENABLED=true ile açılır.
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    enabled: ${SWAGGER_ENABLED:false}
   api-docs:
     path: /v1/api-docs
+    enabled: ${SWAGGER_ENABLED:false}
 
 github:
   client-id: ${GITHUB_CLIENT_ID}
   client-secret: ${GITHUB_CLIENT_SECRET}
   callback-url: ${GITHUB_CALLBACK_URL:http://localhost:3000/auth/callback}
+  # Özel depo taraması için `repo` gerekir. Yalnızca açık depolar yeterliyse `public_repo,user:email` yapın.
+  oauth-scope: ${GITHUB_OAUTH_SCOPE:repo,user:email}
+
+# Bellek içi hız sınırları (istek/dakika). nginx limit_req ile birlikte çalışır.
+rate-limit:
+  auth-per-minute: ${RATE_LIMIT_AUTH_PER_MINUTE:30}   # /auth/** (IP başına)
+  scan-per-minute: ${RATE_LIMIT_SCAN_PER_MINUTE:10}   # POST /scan/** (kullanıcı başına)
 
 jwt:
   secret: ${JWT_SECRET}

@@ -48,6 +48,11 @@ public class UserRepository {
         return jdbcTemplate.update("UPDATE users SET github_token = NULL WHERE id = ?", userId);
     }
 
+    /** Kullanıcıyı siler; depo, borç, ayar, bildirim ve token kayıtları ON DELETE CASCADE ile gider. */
+    public int deleteById(Long userId) {
+        return jdbcTemplate.update("DELETE FROM users WHERE id = ?", userId);
+    }
+
     public User save(User user) {
         String sql = "INSERT INTO users (github_id, email, name, avatar_url, github_login, github_token) " +
                      "VALUES (?, ?, ?, ?, ?, ?) " +

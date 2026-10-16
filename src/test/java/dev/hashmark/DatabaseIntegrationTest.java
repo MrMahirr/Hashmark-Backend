@@ -1,5 +1,8 @@
 package dev.hashmark;
 
+import dev.hashmark.auth.repository.OAuthStateRepository;
+import dev.hashmark.auth.repository.RefreshTokenRepository;
+import dev.hashmark.auth.repository.UserRepository;
 import dev.hashmark.common.util.FingerprintUtil;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.dto.DebtFilterRequest;
@@ -572,6 +575,61 @@ class DatabaseIntegrationTest {
         settings.markDigestSent(userId, friday);
         assertEquals(0, settings.findDigestRecipients("FRIDAY", friday).size(), "aynı gün ikinci kez gönderilmez");
         assertEquals(1, settings.findDigestRecipients("FRIDAY", friday.plusWeeks(1)).size());
+    }
+
+    @Test
+    void refreshTokenIsSingleUseAndReuseIsDetected() {
+        migrateAll();
+        RefreshTokenRepository tokens = new RefreshTokenRepository(jdbc);
+        tokens.insert("j1", "fam", userId, 60_000);
+
+        assertTrue(tokens.markUsedIfActive("j1"));
+        assertFalse(tokens.markUsedIfActive("j1"), "ikinci kullanım reddedilmeli");
+
+        var state = tokens.findState("j1").orElseThrow();
+        assertTrue(state.used());
+        assertFalse(state.revoked());
+        assertEquals("fam", state.familyId());
+
+        tokens.insert("j2", "fam", userId, 60_000);
+        assertEquals(2, tokens.revokeFamily("fam"));
+        assertFalse(tokens.markUsedIfActive("j2"), "iptal edilen aile kullanılamaz");
+        assertTrue(tokens.findState("nope").isEmpty());
+    }
+
+    @Test
+    void expiredRefreshTokenCannotBeUsed() {
+        migrateAll();
+        RefreshTokenRepository tokens = new RefreshTokenRepository(jdbc);
+        tokens.insert("old", "fam", userId, -1000);
+        assertFalse(tokens.markUsedIfActive("old"));
+    }
+
+    @Test
+    void oauthStateIsConsumedOnce() {
+        migrateAll();
+        OAuthStateRepository states = new OAuthStateRepository(jdbc);
+        states.insert("s1", 60_000);
+        states.insert("s2", -1000);
+        assertTrue(states.consume("s1"));
+        assertFalse(states.consume("s1"), "state tek kullanımlık");
+        assertFalse(states.consume("s2"), "süresi dolan state reddedilir");
+        assertFalse(states.consume("unknown"));
+        assertEquals(1, states.deleteExpired());
+    }
+
+    @Test
+    void deletingUserRemovesAllTheirData() {
+        migrateAll();
+        RefreshTokenRepository tokens = new RefreshTokenRepository(jdbc);
+        tokens.insert("j1", "fam", userId, 60_000);
+        jdbc.update("INSERT INTO debts (repo_id, file_path, line_no, label, content, fingerprint) VALUES (?, 'A.java', 1, 'TODO', 'x', 'fp')", repoId);
+
+        assertEquals(1, new UserRepository(jdbc).deleteById(userId));
+
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM repos WHERE user_id = ?", Integer.class, userId));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM debts", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM refresh_tokens", Integer.class));
     }
 
     private void insertSnapshot(long repo, LocalDate day, int total, int added, int resolved) {

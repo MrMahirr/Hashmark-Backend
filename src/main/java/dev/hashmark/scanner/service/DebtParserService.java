@@ -1,5 +1,6 @@
 package dev.hashmark.scanner.service;
 
+import dev.hashmark.common.util.SecretMasker;
 import dev.hashmark.debt.dto.DebtDto;
 import org.springframework.stereotype.Service;
 
@@ -366,7 +367,9 @@ public class DebtParserService {
         return cleaned;
     }
 
-    private DebtDto buildDto(String filePath, int line, String label, String content, String tag) {
+    private DebtDto buildDto(String filePath, int line, String label, String rawContent, String tag) {
+        // Yorumda yanlışlıkla bulunan sırlar veritabanına yazılmadan önce maskelenir.
+        String content = SecretMasker.mask(rawContent);
         String clipped = content.length() > MAX_CONTENT_LENGTH
                 ? content.substring(0, MAX_CONTENT_LENGTH - 1) + "…"
                 : content;

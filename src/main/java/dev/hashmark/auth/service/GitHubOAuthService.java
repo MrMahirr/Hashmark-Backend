@@ -10,9 +10,9 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class GitHubOAuthService {
@@ -26,18 +26,25 @@ public class GitHubOAuthService {
     @Value("${github.callback-url}")
     private String callbackUrl;
 
+    /** İstenen OAuth kapsamı. Özel depo taraması için `repo` gerekir; yalnızca açık depolar için `public_repo`. */
+    @Value("${github.oauth-scope:repo,user:email}")
+    private String oauthScope;
+
     private final RestTemplate restTemplate;
 
     public GitHubOAuthService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
     }
 
-    public String buildAuthorizationUrl() {
-        return "https://github.com/login/oauth/authorize" +
-                "?client_id=" + clientId +
-                "&redirect_uri=" + callbackUrl +
-                "&scope=repo,user:email" +
-                "&state=" + UUID.randomUUID();
+    public String buildAuthorizationUrl(String state) {
+        return UriComponentsBuilder.fromUriString("https://github.com/login/oauth/authorize")
+                .queryParam("client_id", clientId)
+                .queryParam("redirect_uri", callbackUrl)
+                .queryParam("scope", oauthScope)
+                .queryParam("state", state)
+                .encode()
+                .build()
+                .toUriString();
     }
 
     public String exchangeCodeForToken(String code) {
