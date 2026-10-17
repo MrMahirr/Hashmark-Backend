@@ -18,9 +18,32 @@ spring:
       connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:3000}
       max-lifetime: ${DB_POOL_MAX_LIFETIME_MS:1500000}     # 25 dk; proxy/Postgres zaman aşımlarından kısa
       leak-detection-threshold: ${DB_POOL_LEAK_DETECTION_MS:20000}
+      # Oturum sınırları (Faz 2): kaçak sorgu, kilit kuyruğu ve açık bırakılmış transaction bağlantıyı kilitlemesin.
+      # statement_timeout aşılırsa sorgu iptal edilir (SQLSTATE 57014); lock_timeout migrasyon kilidinin
+      # arkasında istek birikmesini önler; idle_in_transaction açık kalmış transaction'ı keser.
+      connection-init-sql: >-
+        SET statement_timeout = '${DB_STATEMENT_TIMEOUT:30s}';
+        SET lock_timeout = '${DB_LOCK_TIMEOUT:10s}';
+        SET idle_in_transaction_session_timeout = '${DB_IDLE_IN_TX_TIMEOUT:60s}'
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # Flyway havuzdan DEĞİL kendi bağlantısıyla çalışır (url/user verilince Boot ayrı DataSource kurar).
+    # Böylece aşağıdaki oturum ayarları uygulama havuzuna sızmaz. İleride ayrı migrasyon rolü
+    # (RLS, plan 5.5) için FLYWAY_USER/FLYWAY_PASSWORD verilir; boşsa uygulama kullanıcısı kullanılır.
+    url: ${DATABASE_URL}
+    user: ${FLYWAY_USER:${DATABASE_USERNAME}}
+    password: ${FLYWAY_PASSWORD:${DATABASE_PASSWORD}}
+    # Migrasyon kuralları: docs/MIGRATIONS.md. Uzun DDL'e (CONCURRENTLY) izin ver ama kilit beklemede hızlı düş.
+    # (Boot listeyi tek dizgede birleştirir; ayırıcı ';' şart.)
+    init-sqls: "SET statement_timeout = 0; SET lock_timeout = '${FLYWAY_LOCK_TIMEOUT:5s}'"
+    out-of-order: false
+    clean-disabled: true
+    # Flyway PG'de varsayılan olarak pg_advisory_xact_lock ile AÇIK bir transaction tutar; CREATE INDEX
+    # CONCURRENTLY bu transaction'ın bitmesini bekler ve kendi kendini kilitler (lock_timeout yoksa sonsuza dek).
+    # Oturum düzeyi kilit bu kilitlenmeyi kaldırır (MigrationConventionsTest ile gerçek PG'de doğrulandı).
+    postgresql:
+      transactional-lock: false
 
 # Swagger prod'da kapalıdır; geliştirmede SWAGGER_ENABLED=true ile açılır.
 springdoc:

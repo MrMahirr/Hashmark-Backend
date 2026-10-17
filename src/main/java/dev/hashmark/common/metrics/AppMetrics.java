@@ -62,6 +62,15 @@ public class AppMetrics {
                 .increment(rows);
     }
 
+    /** kind: "statement" (statement_timeout) veya "lock" (lock_timeout / kilit alınamadı). */
+    public void dbTimeout(String kind) {
+        Counter.builder("hashmark.db.timeout")
+                .description("DB zaman aşımı nedeniyle 503 dönen istekler")
+                .tag("kind", kind)
+                .register(registry)
+                .increment();
+    }
+
     public void githubRateLimitRemaining(long remaining) {
         githubRateLimitRemaining.set(remaining);
     }

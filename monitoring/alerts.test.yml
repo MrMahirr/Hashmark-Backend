@@ -91,3 +91,42 @@ tests:
             exp_annotations:
               summary: "TLS sertifikası 14 günden az süre içinde bitiyor: https://x/"
               description: "Certbot yenilemesini kontrol edin (certbot renew --dry-run)."
+
+  - name: DB zaman aşımları artınca alarm
+    interval: 1m
+    input_series:
+      - series: 'hashmark_db_timeout_total{job="backend",kind="lock"}'
+        values: '0+2x15'
+      - series: 'hashmark_db_timeout_total{job="backend",kind="statement"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: DbTimeouts
+        exp_alerts:
+          - exp_labels: { severity: warning, kind: lock }
+            exp_annotations:
+              summary: "DB zaman aşımları artıyor (lock)"
+              description: "Son 10 dakikada 20 istek DB zaman aşımıyla 503 aldı. statement: yavaş sorgu (scripts/pg-top-queries.sh); lock: uzun kilit tutan migrasyon/oturum (pg_stat_activity)."
+
+  - name: vakum geride kalırsa alarm, küçük tabloda alarm yok
+    interval: 1m
+    input_series:
+      - series: 'hashmark_db_table_dead_rows{job="backend",table="debts"}'
+        values: '50000x500'
+      - series: 'hashmark_db_table_live_rows{job="backend",table="debts"}'
+        values: '100000x500'
+      - series: 'hashmark_db_table_dead_rows{job="backend",table="users"}'
+        values: '500x500'
+      - series: 'hashmark_db_table_live_rows{job="backend",table="users"}'
+        values: '100x500'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: DbAutovacuumLagging
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: DbAutovacuumLagging
+        exp_alerts:
+          - exp_labels: { severity: warning, job: backend, table: debts }
+            exp_annotations:
+              summary: "Otomatik vakum geride: debts"
+              description: "6 saattir ölü satır oranı %20'nin üstünde. Uzun açık transaction (idle in transaction) vakumu engelliyor olabilir; docs/POSTGRES_TUNING.md → 'Vakum geride'."

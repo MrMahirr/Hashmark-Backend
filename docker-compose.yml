@@ -12,15 +12,49 @@ services:
     container_name: hashmark_postgres
     logging: *default-logging
     restart: unless-stopped
-    # Yavaş sorgu analizi için (scripts/pg-top-queries.sh). Değişiklik Postgres yeniden başlatması ister.
+    # Sunucu ayarları (Faz 2 ince ayar). Bellek değerleri ~2–4 GB'lık tek sunucu içindir (backend 1 GB alır);
+    # sunucu büyürse .env'den yükseltin: shared_buffers ≈ Postgres'e ayrılan RAM'in %25'i,
+    # effective_cache_size ≈ %50–75'i. Değişiklik Postgres yeniden başlatması ister (docker compose up -d postgres).
+    # Ayrıntı ve gerekçe: docs/POSTGRES_TUNING.md
     command:
       - postgres
+      # Yavaş sorgu analizi (scripts/pg-top-queries.sh)
       - -c
       - shared_preload_libraries=pg_stat_statements
       - -c
       - pg_stat_statements.track=all
       - -c
       - log_min_duration_statement=1000
+      # Bellek
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-256MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-768MB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-8MB}
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-64MB}
+      # Bağlantı: Hikari (15) + Flyway + yedek/izleme betikleri için bol pay; varsayılan 100 gereksiz bellek ayırır.
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-50}
+      # Güvenlik ağı (uygulama da oturum başında ayarlar): açık unutulan transaction kilit ve vakumu tutmasın.
+      - -c
+      - idle_in_transaction_session_timeout=${PG_IDLE_IN_TX_TIMEOUT:-5min}
+      # SSD için planlayıcı maliyeti
+      - -c
+      - random_page_cost=1.1
+      # Otomatik vakum gözlemi: 10 sn'den uzun süren vakum/analyze loglanır; I/O süresi pg_stat_statements'a girer.
+      - -c
+      - log_autovacuum_min_duration=10s
+      - -c
+      - track_io_timing=on
+      # Sık silinen/güncellenen tablolar (debts, scan_jobs) için daha erken vakum
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.05
+    # Paralel sorgular /dev/shm kullanır; Docker varsayılanı (64 MB) work_mem ile yetmeyebilir.
+    shm_size: 256mb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-hashmark}
       POSTGRES_USER: ${POSTGRES_USER:-hashmark}
@@ -63,6 +97,10 @@ services:
       - DATABASE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-hashmark}
       - DATABASE_USERNAME=${POSTGRES_USER:-hashmark}
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_STATEMENT_TIMEOUT=${DB_STATEMENT_TIMEOUT:-30s}
+      - DB_LOCK_TIMEOUT=${DB_LOCK_TIMEOUT:-10s}
+      - FLYWAY_USER=${FLYWAY_USER:-${POSTGRES_USER:-hashmark}}
+      - FLYWAY_PASSWORD=${FLYWAY_PASSWORD:-${POSTGRES_PASSWORD}}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL}
