@@ -24,7 +24,9 @@ public class Repo {
     private String lastScannedSha;
     /** İzlenen (taranan) depo mu; false = yalnızca GitHub'dan gelen aday. */
     private Boolean tracked;
-    
+    /** GitHub'ın bildirdiği depo boyutu (KB); bilinmiyorsa null. */
+    private Integer sizeKb;
+
     // Transient / calculated field
     private Integer debtCount;
     /** Açık borçların etiket kırılımı (yalnızca liste/ayrıntı uçlarında dolar). */

@@ -7,6 +7,7 @@ import dev.hashmark.common.util.AesEncryptionUtil;
 import dev.hashmark.repo.dto.GitHubRepoDto;
 import dev.hashmark.repo.dto.RepoDto;
 import dev.hashmark.scanner.service.GitHubFileService;
+import dev.hashmark.scanner.service.ScanQuotaService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
 import org.springframework.stereotype.Service;
@@ -22,12 +23,15 @@ public class RepoService {
     private final UserRepository userRepository;
     private final GitHubRepoService gitHubRepoService;
     private final AesEncryptionUtil aesEncryptionUtil;
+    private final ScanQuotaService quotaService;
 
-    public RepoService(RepoRepository repoRepository, UserRepository userRepository, GitHubRepoService gitHubRepoService, AesEncryptionUtil aesEncryptionUtil) {
+    public RepoService(RepoRepository repoRepository, UserRepository userRepository, GitHubRepoService gitHubRepoService,
+                       AesEncryptionUtil aesEncryptionUtil, ScanQuotaService quotaService) {
         this.repoRepository = repoRepository;
         this.userRepository = userRepository;
         this.gitHubRepoService = gitHubRepoService;
         this.aesEncryptionUtil = aesEncryptionUtil;
+        this.quotaService = quotaService;
     }
 
     public void syncRepos(Long userId) {
@@ -47,6 +51,7 @@ public class RepoService {
                     .githubRepoId(dto.getId())
                     .fullName(dto.getFullName())
                     .isPrivate(dto.getIsPrivate())
+                    .sizeKb(dto.getSize())
                     .build();
             repoRepository.save(repoToSave);
         }
@@ -73,6 +78,9 @@ public class RepoService {
 
     /** Adayı izlemeye alır; sonraki taramalara dahil olur. */
     public RepoDto trackRepo(Long userId, Long repoId) {
+        Repo repo = repoRepository.findByIdAndUserId(repoId, userId)
+                .orElseThrow(() -> ApiException.notFound("Repo not found"));
+        quotaService.checkCanTrack(userId, repo);
         if (repoRepository.markTracked(repoId, userId) == 0) {
             throw ApiException.notFound("Repo not found");
         }

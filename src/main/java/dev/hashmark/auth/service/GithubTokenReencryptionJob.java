@@ -7,6 +7,7 @@ import dev.hashmark.common.util.AesEncryptionUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -42,6 +43,7 @@ public class GithubTokenReencryptionJob {
     /** Açılıştan 1 dk sonra, sonra günde bir. Dönüş sonrası iş yoksa yalnızca tek boş sorgu çalışır. */
     @Scheduled(initialDelayString = "${encryption.reencrypt.initial-delay-ms:60000}",
                fixedDelayString = "${encryption.reencrypt.interval-ms:86400000}")
+    @SchedulerLock(name = "github-token-reencrypt", lockAtMostFor = "PT30M", lockAtLeastFor = "PT1M")
     public void scheduled() {
         if (!enabled) {
             return;

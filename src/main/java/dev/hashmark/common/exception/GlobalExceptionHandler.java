@@ -33,7 +33,11 @@ public class GlobalExceptionHandler {
                 ex.getMessage(),
                 ex.getCode()
         );
-        return new ResponseEntity<>(errorResponse, ex.getHttpStatus());
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getHttpStatus());
+        if (ex.getRetryAfterSeconds() != null) {
+            response.header("Retry-After", String.valueOf(Math.max(1, ex.getRetryAfterSeconds())));
+        }
+        return response.body(errorResponse);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

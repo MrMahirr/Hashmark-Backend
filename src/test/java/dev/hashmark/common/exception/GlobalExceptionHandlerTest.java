@@ -19,6 +19,18 @@ class GlobalExceptionHandlerTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler(new AppMetrics(registry));
 
     @Test
+    void apiExceptionWithRetryAfterSetsHeaderAndCode() {
+        ResponseEntity<ErrorResponse> response = handler.handleApiException(
+                ApiException.serviceUnavailable("GITHUB_UNAVAILABLE", "down", 30));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertEquals("30", response.getHeaders().getFirst("Retry-After"));
+        assertEquals("GITHUB_UNAVAILABLE", response.getBody().getCode());
+
+        ResponseEntity<ErrorResponse> plain = handler.handleApiException(ApiException.notFound("x"));
+        assertEquals(null, plain.getHeaders().getFirst("Retry-After"));
+    }
+
+    @Test
     void statementTimeoutBecomes503AndIsCounted() {
         ResponseEntity<ErrorResponse> response = handler.handleDbTimeout(new QueryTimeoutException("canceling statement"));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());

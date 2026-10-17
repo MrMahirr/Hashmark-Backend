@@ -56,7 +56,10 @@ class CrossTenantIsolationTest {
         adminDataSource = new DriverManagerDataSource(url, user, password);
         new JdbcTemplate(adminDataSource).execute("CREATE SCHEMA " + schema);
         Flyway.configure().dataSource(adminDataSource).schemas(schema).defaultSchema(schema)
-                .locations("classpath:db/migration").load().migrate();
+                .locations("classpath:db/migration")
+                // application.yml ile aynı: aksi halde CONCURRENTLY migrasyonu Flyway'in kendi transaction'ını bekler
+                .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
+                .load().migrate();
 
         DriverManagerDataSource dataSource = new DriverManagerDataSource(url, user, password);
         dataSource.setSchema(schema);

@@ -1,5 +1,6 @@
 package dev.hashmark.repo.service;
 
+import dev.hashmark.common.resilience.GitHubResilience;
 import dev.hashmark.repo.dto.GitHubRepoDto;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
@@ -18,9 +19,11 @@ public class GitHubRepoService {
     private String apiUrl = "https://api.github.com";
 
     private final RestTemplate restTemplate;
+    private final GitHubResilience resilience;
 
-    public GitHubRepoService(RestTemplate restTemplate) {
+    public GitHubRepoService(RestTemplate restTemplate, GitHubResilience resilience) {
         this.restTemplate = restTemplate;
+        this.resilience = resilience;
     }
 
     public List<GitHubRepoDto> fetchUserRepos(String githubToken) {
@@ -32,12 +35,12 @@ public class GitHubRepoService {
 
         HttpEntity<Void> request = new HttpEntity<>(headers);
 
-        ResponseEntity<List<GitHubRepoDto>> response = restTemplate.exchange(
+        ResponseEntity<List<GitHubRepoDto>> response = resilience.callInteractive(() -> restTemplate.exchange(
                 url,
                 HttpMethod.GET,
                 request,
-                new ParameterizedTypeReference<>() {}
-        );
+                new ParameterizedTypeReference<List<GitHubRepoDto>>() {}
+        ));
 
         List<GitHubRepoDto> body = response.getBody();
         return body != null ? body : List.of();

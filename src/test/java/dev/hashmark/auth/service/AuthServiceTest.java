@@ -62,6 +62,23 @@ class AuthServiceTest {
     }
 
     @Test
+    void accountRefreshLimitRejectsBeforeTheTokenIsConsumed() {
+        dev.hashmark.common.ratelimit.RateLimitProperties props = new dev.hashmark.common.ratelimit.RateLimitProperties();
+        props.setRefreshPerAccountPerMinute(1);
+        AuthService limited = new AuthService(github, mock(UserRepository.class), jwtUtil, mock(AesEncryptionUtil.class),
+                refreshTokens, oauthStates, metrics, new dev.hashmark.common.ratelimit.AccountRateLimiter(props, metrics));
+        ReflectionTestUtils.setField(limited, "accessTokenExpiry", 900000L);
+        when(refreshTokens.markUsedIfActive("jti-1")).thenReturn(true);
+        limited.refresh(jwtUtil.generateRefreshToken(7L, "jti-1", "fam-1"));
+
+        ApiException ex = assertThrows(ApiException.class,
+                () -> limited.refresh(jwtUtil.generateRefreshToken(7L, "jti-2", "fam-1")));
+
+        assertEquals(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, ex.getHttpStatus());
+        verify(refreshTokens, never()).markUsedIfActive("jti-2");
+    }
+
+    @Test
     void reusedTokenOutsideGraceRevokesWholeFamily() {
         String old = jwtUtil.generateRefreshToken(7L, "jti-1", "fam-1");
         when(refreshTokens.markUsedIfActive("jti-1")).thenReturn(false);

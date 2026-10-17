@@ -66,6 +66,71 @@ class RateLimitFilterTest {
         assertEquals(200, status(filter, "GET", "/repos", "1.1.1.1"));
     }
 
+    private MockHttpServletResponse callAs(RateLimitFilter filter, String method, String uri, String ip, Long userId)
+            throws Exception {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                userId == null ? null : new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        userId, null, java.util.List.of()));
+        try {
+            return call(filter, method, uri, ip);
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
+    private static dev.hashmark.common.ratelimit.RateLimitProperties matrix() {
+        dev.hashmark.common.ratelimit.RateLimitProperties p = new dev.hashmark.common.ratelimit.RateLimitProperties();
+        p.setExportPerMinute(2);
+        p.setSyncPerMinute(1);
+        p.setContextPerMinute(2);
+        p.setPublicPerMinute(2);
+        p.setUserPerMinute(5);
+        p.setIpPerMinute(8);
+        return p;
+    }
+
+    @Test
+    void expensiveEndpointsAreLimitedPerUserNotPerIp() throws Exception {
+        RateLimitFilter filter = new RateLimitFilter(matrix(), now::get,
+                new dev.hashmark.common.metrics.AppMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+        assertEquals(200, callAs(filter, "GET", "/debts/export", "1.1.1.1", 7L).getStatus());
+        assertEquals(200, callAs(filter, "GET", "/debts/export", "9.9.9.9", 7L).getStatus());
+        assertEquals(429, callAs(filter, "GET", "/debts/export", "5.5.5.5", 7L).getStatus(), "IP değişse de kullanıcı aynı");
+        assertEquals(200, callAs(filter, "GET", "/debts/export", "1.1.1.1", 8L).getStatus(), "başka kullanıcı etkilenmez");
+
+        assertEquals(200, callAs(filter, "POST", "/repos/sync", "1.1.1.1", 7L).getStatus());
+        assertEquals(429, callAs(filter, "POST", "/repos/sync", "1.1.1.1", 7L).getStatus());
+        assertEquals(200, callAs(filter, "GET", "/debts/3/context", "1.1.1.1", 9L).getStatus());
+        assertEquals(200, callAs(filter, "GET", "/debts/4/context", "1.1.1.1", 9L).getStatus());
+        assertEquals(429, callAs(filter, "GET", "/debts/5/context", "1.1.1.1", 9L).getStatus());
+    }
+
+    @Test
+    void generalUserAndIpFloorsApply() throws Exception {
+        RateLimitFilter filter = new RateLimitFilter(matrix(), now::get,
+                new dev.hashmark.common.metrics.AppMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+        for (int i = 0; i < 5; i++) {
+            assertEquals(200, callAs(filter, "GET", "/debts", "2.2.2.2", 11L).getStatus());
+        }
+        assertEquals(429, callAs(filter, "GET", "/debts", "3.3.3.3", 11L).getStatus(), "kullanıcı tabanı");
+        // IP tabanı: aynı IP'den farklı kullanıcılar (ilk 5'i zaten 2.2.2.2'den sayıldı)
+        assertEquals(200, callAs(filter, "GET", "/debts", "2.2.2.2", 12L).getStatus());
+        assertEquals(200, callAs(filter, "GET", "/debts", "2.2.2.2", 13L).getStatus());
+        assertEquals(200, callAs(filter, "GET", "/debts", "2.2.2.2", 14L).getStatus());
+        assertEquals(429, callAs(filter, "GET", "/debts", "2.2.2.2", 15L).getStatus(), "IP tabanı (8/dk)");
+    }
+
+    @Test
+    void publicEndpointsAreLimitedPerIp() throws Exception {
+        RateLimitFilter filter = new RateLimitFilter(matrix(), now::get,
+                new dev.hashmark.common.metrics.AppMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+        assertEquals(200, status(filter, "GET", "/public/stats", "4.4.4.4"));
+        assertEquals(200, status(filter, "GET", "/public/stats", "4.4.4.4"));
+        MockHttpServletResponse res = call(filter, "GET", "/public/stats", "4.4.4.4");
+        assertEquals(429, res.getStatus());
+        assertTrue(res.getContentAsString().contains("RATE_LIMITED"));
+    }
+
     @Test
     void countsRejectionsPerScope() throws Exception {
         io.micrometer.core.instrument.simple.SimpleMeterRegistry registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();

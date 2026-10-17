@@ -32,6 +32,35 @@ public class ScanProperties {
     /** Bir taramada git blame için en fazla kaç dosya sorgulanır (0 = kapalı). */
     private int blameMaxFiles = 25;
 
+    /** Geçici hatada (GitHub kesintisi, rate-limit) iş en fazla bu kadar ertelenir, sonra FAILED. */
+    private int maxDeferrals = 8;
+    /** İlk erteleme süresi; her ertelemede ikiye katlanır (+ jitter). */
+    private long deferBaseSeconds = 30;
+    /** Tek ertelemenin üst sınırı. */
+    private long deferMaxSeconds = 900;
+    /**
+     * Düzgün kapanışta çalışan taramaların bitmesi için beklenecek süre. Dolunca kalanlar kuyruğa geri bırakılır
+     * (başka instance ya da yeniden açılış hemen devralır; kalp atışı zaman aşımı beklenmez).
+     */
+    private long shutdownGraceSeconds = 20;
+    /** Kuyruk üst sınırı (tüm kullanıcılar): dolunca yeni tarama 503 alır. Sınırsız kuyruk yok. */
+    private int maxQueueDepth = 500;
+
+    /** Kullanıcı kotaları (0 = sınırsız). */
+    private Quota quota = new Quota();
+
+    @Data
+    public static class Quota {
+        /** Kullanıcının aynı anda kuyrukta + çalışan en fazla tarama sayısı. */
+        private int maxActivePerUser = 3;
+        /** Kullanıcının son 24 saatte başlatabileceği tarama sayısı. */
+        private int maxPerDay = 50;
+        /** Kullanıcının takip edebileceği depo sayısı. */
+        private int maxTrackedRepos = 50;
+        /** GitHub'ın bildirdiği depo boyutu (MB) bundan büyükse takip/tarama reddedilir. */
+        private long maxRepoSizeMb = 1024;
+    }
+
     private List<String> excludedDirs = List.of(
             "node_modules", "vendor", "dist", "build", "out", "target", ".git", ".next", ".nuxt",
             ".gradle", ".idea", ".vscode", "coverage", "__pycache__", ".venv", "venv", "site-packages",

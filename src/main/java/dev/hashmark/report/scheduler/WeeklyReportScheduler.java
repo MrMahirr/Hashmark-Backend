@@ -8,6 +8,7 @@ import dev.hashmark.settings.model.UserSettings;
 import dev.hashmark.settings.repository.UserSettingsRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -41,6 +42,8 @@ public class WeeklyReportScheduler {
     }
 
     @Scheduled(cron = "0 0 8 * * *", zone = "${report.timezone:Europe/Istanbul}")
+    // 2+ instance'ta tek gönderim: kilit en az 5 dk tutulur (saat kayması olan ikinci instance da atlar)
+    @SchedulerLock(name = "weekly-report", lockAtMostFor = "PT1H", lockAtLeastFor = "PT5M")
     public void sendWeeklyReports() {
         LocalDate today = LocalDate.now(zone);
         sendFor(today.getDayOfWeek(), today);

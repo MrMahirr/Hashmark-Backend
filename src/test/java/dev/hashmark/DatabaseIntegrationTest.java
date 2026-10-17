@@ -102,7 +102,9 @@ class DatabaseIntegrationTest {
                 .dataSource(adminDataSource)
                 .schemas(schema)
                 .defaultSchema(schema)
-                .locations("classpath:db/migration");
+                .locations("classpath:db/migration")
+                // application.yml ile aynı: aksi halde CONCURRENTLY migrasyonu Flyway'in kendi transaction'ını bekler
+                .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"));
         if (target != null) {
             config.target(target);
         }
@@ -827,6 +829,177 @@ class DatabaseIntegrationTest {
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM repos WHERE user_id = ?", Integer.class, userId));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM debts", Integer.class));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM refresh_tokens", Integer.class));
+    }
+
+    // ------------------------------------------------------------------
+    // Faz 3: adil kuyruk, erteleme, fencing, kotalar, dağıtık kilit
+    // ------------------------------------------------------------------
+
+    private long newUser() {
+        return jdbc.queryForObject(
+                "INSERT INTO users (github_id, email, name, github_token) VALUES (?, 'x@y.z', 'N', 't') RETURNING id",
+                Long.class, "gh-" + UUID.randomUUID());
+    }
+
+    private long newRepo(long owner) {
+        return jdbc.queryForObject(
+                "INSERT INTO repos (user_id, github_repo_id, full_name) VALUES (?, ?, 'o/r') RETURNING id",
+                Long.class, owner, "r-" + UUID.randomUUID());
+    }
+
+    @Test
+    void claimIsFairAcrossUsers() {
+        migrateAll();
+        long other = newUser();
+        // A kullanıcısı önce 3 iş kuyruğa koyar, B sonra 1 iş
+        ScanJob a1 = jobs.enqueue(repoId, userId, null);
+        ScanJob a2 = jobs.enqueue(newRepo(userId), userId, null);
+        jobs.enqueue(newRepo(userId), userId, null);
+        ScanJob b1 = jobs.enqueue(newRepo(other), other, null);
+
+        List<ScanJob> claimed = jobs.claimPending(2);
+
+        assertEquals(Set.of(a1.getId(), b1.getId()), Set.of(claimed.get(0).getId(), claimed.get(1).getId()),
+                "B'nin işi A'nın kuyruğunun arkasında beklememeli");
+        claimed.forEach(j -> assertNotNull(j.getClaimToken(), "her sahiplenme jeton alır"));
+
+        // İki kullanıcının da 1 çalışan işi var: eşitlikte en eski baş iş (a2) önce, kullanıcı başına bir aday
+        jobs.enqueue(newRepo(other), other, null);
+        List<ScanJob> next = jobs.claimPending(1);
+        assertEquals(List.of(a2.getId()), next.stream().map(ScanJob::getId).toList());
+    }
+
+    @Test
+    void claimPrefersUsersWithFewerRunningJobs() {
+        migrateAll();
+        long other = newUser();
+        jobs.enqueue(repoId, userId, null);
+        jobs.claimPending(1);                                   // A'nın 1 işi çalışıyor
+        ScanJob a2 = jobs.enqueue(newRepo(userId), userId, null);
+        ScanJob b1 = jobs.enqueue(newRepo(other), other, null); // B daha yeni ama hiç çalışan işi yok
+
+        List<ScanJob> claimed = jobs.claimPending(1);
+
+        assertEquals(b1.getId(), claimed.get(0).getId());
+        assertEquals("PENDING", jobs.findById(a2.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void deferredJobWaitsUntilRunAfterAndKeepsAttempts() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        ScanJob claimed = jobs.claimPending(1).get(0);
+
+        assertTrue(jobs.defer(job.getId(), claimed.getClaimToken(), 3600, "Retrying in 3600s: GitHub down"));
+
+        ScanJob deferred = jobs.findById(job.getId()).orElseThrow();
+        assertEquals("PENDING", deferred.getStatus());
+        assertEquals(0, deferred.getAttempts(), "erteleme deneme hakkı yakmaz");
+        assertEquals(1, deferred.getDeferrals());
+        assertNull(deferred.getClaimToken());
+        assertTrue(jobs.claimPending(5).isEmpty(), "erteleme bitmeden alınmaz");
+        assertEquals(1, jobs.countPending(), "kuyruk üst sınırına sayılır");
+        assertEquals(0.0, jobs.oldestPendingAgeSeconds(), "bilinçli erteleme takılı kuyruk sayılmaz");
+
+        jdbc.update("UPDATE scan_jobs SET run_after = NOW() - INTERVAL '1 second' WHERE id = ?", job.getId());
+        ScanJob again = jobs.claimPending(5).get(0);
+        assertEquals(job.getId(), again.getId());
+        assertNull(again.getRunAfter());
+        assertFalse(claimed.getClaimToken().equals(again.getClaimToken()), "yeni sahiplenme yeni jeton");
+    }
+
+    @Test
+    void staleRunIsFencedOutAfterHandover() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        java.util.UUID oldToken = jobs.claimPending(1).get(0).getClaimToken();
+
+        // Kalp atışı kesildi → kurtarıldı → başka bir instance sahiplendi
+        jdbc.update("UPDATE scan_jobs SET heartbeat_at = NOW() - INTERVAL '10 minutes' WHERE id = ?", job.getId());
+        jobs.recoverStale(5, 3);
+        java.util.UUID newToken = jobs.claimPending(1).get(0).getClaimToken();
+
+        // Eski çalıştırma geç kalıp sonuç yazmaya çalışır: hiçbir şey yazılmaz
+        assertTrue(writer.write(job.getId(), oldToken, repoId, List.of(debt("A.java", 1, "TODO", "stale")),
+                result("a".repeat(40)), null).isEmpty());
+        assertFalse(jobs.complete(job.getId(), oldToken, "FAILED", 0, 0, 0, 0, null, "late"));
+        assertFalse(jobs.defer(job.getId(), oldToken, 60, "late"));
+        assertFalse(jobs.release(job.getId(), oldToken));
+        jobs.updateProgress(job.getId(), oldToken, 999);
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM debts WHERE repo_id = ?", Integer.class, repoId));
+        assertEquals(0, jobs.findById(job.getId()).orElseThrow().getFilesScanned(), "eski çalıştırma ilerleme yazamaz");
+
+        // Yeni sahip yazabilir
+        assertTrue(writer.write(job.getId(), newToken, repoId, List.of(debt("A.java", 1, "TODO", "fresh")),
+                result("b".repeat(40)), null).isPresent());
+        assertEquals("DONE", jobs.findById(job.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void releaseOnShutdownLetsAnotherInstanceTakeOverImmediately() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        java.util.UUID token = jobs.claimPending(1).get(0).getClaimToken();
+
+        assertTrue(jobs.release(job.getId(), token));
+
+        ScanJob taken = jobs.claimPending(1).get(0);
+        assertEquals(job.getId(), taken.getId());
+        assertEquals(1, taken.getAttempts(), "geri bırakma deneme hakkı yakmaz");
+        assertFalse(jobs.complete(job.getId(), token, "DONE", 0, 0, 0, 0, null, null), "eski jeton geçersiz");
+    }
+
+    @Test
+    void quotaCountersSeeOnlyTheRightJobs() {
+        migrateAll();
+        long other = newUser();
+        jobs.enqueue(repoId, userId, null);
+        long r2 = newRepo(userId);
+        jobs.enqueue(r2, userId, null);
+        jobs.claimPending(1);
+        jobs.enqueue(newRepo(other), other, null);
+        jdbc.update("INSERT INTO scan_jobs (repo_id, user_id, status, created_at, finished_at) " +
+                    "VALUES (?, ?, 'DONE', NOW() - INTERVAL '30 hours', NOW() - INTERVAL '30 hours')", r2, userId);
+
+        assertEquals(2, jobs.countActiveByUser(userId), "PENDING + RUNNING");
+        assertEquals(2, jobs.countCreatedByUserWithinHours(userId, 24), "30 saat önceki iş pencere dışında");
+        assertEquals(1, jobs.countActiveByUser(other));
+    }
+
+    @Test
+    void repoSizeIsStoredAndTrackedCountIsScoped() {
+        migrateAll();
+        RepoRepository repos = new RepoRepository(jdbc);
+        var saved = repos.save(dev.hashmark.repo.model.Repo.builder()
+                .userId(userId).githubRepoId("gh-big").fullName("o/big").isPrivate(false).sizeKb(2048).build());
+        assertEquals(2048, saved.getSizeKb());
+        // senkron boyut bildirmezse eski değer korunur
+        var resynced = repos.save(dev.hashmark.repo.model.Repo.builder()
+                .userId(userId).githubRepoId("gh-big").fullName("o/big").isPrivate(false).build());
+        assertEquals(2048, resynced.getSizeKb());
+
+        assertEquals(1, repos.countTrackedByUserId(userId), "aday sayılmaz");
+        repos.markTracked(saved.getId(), userId);
+        assertEquals(2, repos.countTrackedByUserId(userId));
+    }
+
+    @Test
+    void schedulerLockAllowsOnlyOneHolder() {
+        migrateAll();
+        net.javacrumbs.shedlock.core.LockProvider provider = new net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider(
+                net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider.Configuration.builder()
+                        .withJdbcTemplate(jdbc).usingDbTime().build());
+        var config = new net.javacrumbs.shedlock.core.LockConfiguration(java.time.Instant.now(), "weekly-report",
+                java.time.Duration.ofMinutes(10), java.time.Duration.ZERO);
+
+        var first = provider.lock(config);
+        assertTrue(first.isPresent());
+        assertTrue(provider.lock(config).isEmpty(), "ikinci instance kilidi alamaz");
+
+        first.get().unlock();
+        var again = provider.lock(config);
+        assertTrue(again.isPresent(), "bırakılınca yeniden alınabilir");
+        again.get().unlock();
     }
 
     private void insertSnapshot(long repo, LocalDate day, int total, int added, int resolved) {

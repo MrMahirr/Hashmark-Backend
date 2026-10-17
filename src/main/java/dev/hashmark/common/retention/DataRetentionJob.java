@@ -7,6 +7,7 @@ import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.repository.ScanSnapshotRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -42,6 +43,7 @@ public class DataRetentionJob {
 
     /** Varsayılan: her gün 04:30 (03:00 yedeğinden sonra). */
     @Scheduled(cron = "${retention.cron:0 30 4 * * *}")
+    @SchedulerLock(name = "data-retention", lockAtMostFor = "PT2H", lockAtLeastFor = "PT5M")
     public void run() {
         if (!props.isEnabled()) {
             return;

@@ -50,6 +50,40 @@ tests:
               summary: "DB bağlantı havuzunda bekleyen istek var"
               description: "5 dakikadır bağlantı bekleyen iş parçacığı var; havuz (maximum-pool-size) veya yavaş sorgular darboğaz."
 
+  - name: GitHub devresi 2 dakikadan uzun açıksa alarm
+    interval: 1m
+    input_series:
+      - series: 'resilience4j_circuitbreaker_state{job="backend",name="github",state="open"}'
+        values: '0 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: GithubCircuitOpen
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: GithubCircuitOpen
+        exp_alerts:
+          - exp_labels: { severity: warning, job: backend, name: github, state: open }
+            exp_annotations:
+              summary: "GitHub devresi açık"
+              description: "2 dakikadır GitHub çağrıları hızlı hata veriyor (giriş 503, taramalar erteleniyor). https://www.githubstatus.com kontrol edin; runbook: docs/RESILIENCE.md → 'GitHub kesintisi'."
+
+  - name: sürekli yük atma alarm verir, kısa patlama vermez
+    interval: 1m
+    input_series:
+      - series: 'hashmark_loadshed_rejected_total{job="backend",class="expensive",reason="db_pool"}'
+        values: '0 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5+10x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LoadSheddingActive
+        exp_alerts: []
+      - eval_time: 36m
+        alertname: LoadSheddingActive
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Yük atma 10 dakikadır devrede"
+              description: "Pahalı uçlar (tarama, export, senkron) 503 alıyor. Kalıcıysa havuz/CPU büyütme tetikleyicilerine bakın (plan Bölüm 7)."
+
   - name: eski kuyruk işi alarm verir
     interval: 1m
     input_series:

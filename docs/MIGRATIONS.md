@@ -12,7 +12,7 @@ V1–V10 kurallardan önce yazıldı; Flyway checksum'ı değişmesin diye **dok
 | 2 | Başlıkta **`Geri alma:`** notu (SQL ya da "geri alınamaz, çünkü …") | Her değişikliğin geri dönüş yolu önceden yazılır (plan ilke 4) | test |
 | 3 | Yıkıcı değişiklik (`DROP TABLE/COLUMN`, `RENAME`, tip değişimi, `TRUNCATE`) yalnızca **contract** adımında, `-- contract:` notuyla | Eski sürüm kodu hâlâ çalışırken kolon kaybolursa üretim düşer | test |
 | 4 | Var olan tabloda indeks **`CREATE INDEX CONCURRENTLY`** (aynı dosyada yaratılan tablo hariç); kısa olduğu kanıtlıysa `-- lock-ok: <neden>` | Normal `CREATE INDEX` tabloya yazmayı indeks bitene kadar kilitler | test |
-| 5 | `CONCURRENTLY` içeren dosyada **yalnızca** indeks ifadeleri (+ `SET lock_timeout`) | Flyway böyle dosyayı transaction'sız çalıştırır; başka DDL yarıda kalırsa geri alınamaz | test |
+| 5 | `CONCURRENTLY` içeren dosyada **yalnızca** indeks ifadeleri; `SET` de yazılmaz (Flyway onu transaction'lı sayıp "mixed" hatası verir; `lock_timeout` zaten Flyway bağlantısında 5 sn) | Flyway böyle dosyayı transaction'sız çalıştırır; başka DDL yarıda kalırsa geri alınamaz | test + Flyway |
 | 6 | Bir migrasyon yayınlandıktan sonra **değiştirilmez**; düzeltme yeni sürümle yapılır | Flyway checksum doğrulaması açılışı durdurur | Flyway |
 | 7 | Uzun veri dönüşümü (milyonlarca satır `UPDATE`) migrasyonda **yapılmaz**; partili uygulama işi olarak yazılır | Tek dev transaction: uzun kilit, şişen WAL, vakum engeli | inceleme |
 

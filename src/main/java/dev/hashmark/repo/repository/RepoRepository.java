@@ -29,7 +29,15 @@ public class RepoRepository {
             .trackedBranch(rs.getString("tracked_branch"))
             .lastScannedSha(rs.getString("last_scanned_sha"))
             .tracked(rs.getBoolean("tracked"))
+            .sizeKb(rs.getObject("size_kb") != null ? rs.getInt("size_kb") : null)
             .build();
+
+    /** Kullanıcı kotası: izlenen depo sayısı. */
+    public int countTrackedByUserId(Long userId) {
+        Integer n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM repos WHERE user_id = ? AND tracked",
+                Integer.class, userId);
+        return n == null ? 0 : n;
+    }
 
     public List<Repo> findAllByUserId(Long userId) {
         String sql = "SELECT * FROM repos WHERE user_id = ? AND tracked ORDER BY full_name ASC";
@@ -67,19 +75,21 @@ public class RepoRepository {
 
     public Repo save(Repo repo) {
         // Yeni depo aday olarak gelir (tracked = FALSE); mevcut kaydın tracked değeri korunur.
-        String sql = "INSERT INTO repos (user_id, github_repo_id, full_name, private, tracked) " +
-                     "VALUES (?, ?, ?, ?, FALSE) " +
+        String sql = "INSERT INTO repos (user_id, github_repo_id, full_name, private, tracked, size_kb) " +
+                     "VALUES (?, ?, ?, ?, FALSE, ?) " +
                      "ON CONFLICT (user_id, github_repo_id) DO UPDATE " +
-                     "SET full_name = EXCLUDED.full_name, private = EXCLUDED.private " +
+                     "SET full_name = EXCLUDED.full_name, private = EXCLUDED.private, " +
+                     "size_kb = COALESCE(EXCLUDED.size_kb, repos.size_kb) " +
                      "RETURNING *";
-                     
+
         return jdbcTemplate.queryForObject(
                 sql,
                 repoRowMapper,
                 repo.getUserId(),
                 repo.getGithubRepoId(),
                 repo.getFullName(),
-                repo.getIsPrivate()
+                repo.getIsPrivate(),
+                repo.getSizeKb()
         );
     }
 

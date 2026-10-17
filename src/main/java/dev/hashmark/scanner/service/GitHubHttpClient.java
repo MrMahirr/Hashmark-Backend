@@ -1,6 +1,8 @@
 package dev.hashmark.scanner.service;
 
 import dev.hashmark.common.exception.ApiException;
+import dev.hashmark.common.resilience.GitHubResilience;
+import dev.hashmark.common.resilience.GitHubResilience.Lane;
 import dev.hashmark.scanner.config.ScanProperties;
 import dev.hashmark.common.metrics.AppMetrics;
 import org.slf4j.Logger;
@@ -18,29 +20,40 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * GitHub'a giden tüm HTTP çağrıları için ortak istemci: kimlik başlıkları, rate-limit bekleme,
- * 5xx/ağ hatalarında üstel geri çekilme ve yönlendirmeleri elle izleme (token'ı başka hosta sızdırmamak için).
+ * 5xx/ağ hatalarında jitter'lı üstel geri çekilme ve yönlendirmeleri elle izleme (token'ı başka hosta
+ * sızdırmamak için). Her deneme {@link GitHubResilience} şeridinden ve devresinden geçer.
  */
 @Component
 public class GitHubHttpClient {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubHttpClient.class);
-    private static final int MAX_ATTEMPTS = 4;
+    /** Tarama işçisi: arka planda, beklemeyi göze alabilir. */
+    private static final int SCAN_MAX_ATTEMPTS = 4;
+    /** Kullanıcı isteği: tek yeniden deneme, rate-limit için bekleme yok (iş parçacığı asılı kalmasın). */
+    private static final int INTERACTIVE_MAX_ATTEMPTS = 2;
 
     private final HttpClient httpClient;
     private final ScanProperties properties;
     private final AppMetrics metrics;
+    private final GitHubResilience resilience;
 
     public GitHubHttpClient(ScanProperties properties) {
-        this(properties, null);
+        this(properties, null, GitHubResilience.defaults());
+    }
+
+    public GitHubHttpClient(ScanProperties properties, AppMetrics metrics) {
+        this(properties, metrics, GitHubResilience.defaults());
     }
 
     @Autowired
-    public GitHubHttpClient(ScanProperties properties, AppMetrics metrics) {
+    public GitHubHttpClient(ScanProperties properties, AppMetrics metrics, GitHubResilience resilience) {
         this.properties = properties;
         this.metrics = metrics;
+        this.resilience = resilience;
         this.httpClient = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(Duration.ofMillis(properties.getHttpConnectTimeoutMs()))
@@ -61,15 +74,35 @@ public class GitHubHttpClient {
                 .header("User-Agent", "Hashmark");
     }
 
-    /**
-     * Rate-limit (403/429 + sınır başlıkları) için makul süreler beklenir; 5xx ve ağ hatalarında
-     * yeniden denenir. Başarısız olursa anlamlı bir {@link ApiException} fırlatır.
-     */
+    /** Tarama şeridinden gönderir. */
     public HttpResponse<InputStream> send(HttpRequest request) {
+        return send(request, Lane.SCAN);
+    }
+
+    /**
+     * Rate-limit (403/429 + sınır başlıkları) için makul süreler beklenir (yalnızca tarama şeridinde); 5xx ve ağ
+     * hatalarında yalnızca idempotent istekler yeniden denenir. Devre açıksa ya da şerit doluysa hemen 503 döner
+     * (yeniden denenmez). Başarısız olursa anlamlı bir {@link ApiException} fırlatır.
+     * <p>Şerit izni yanıt başlıkları gelince bırakılır; gövde akışı (tarball) tarama süresi sınırıyla korunur.
+     */
+    public HttpResponse<InputStream> send(HttpRequest request, Lane lane) {
+        int maxAttempts = !isIdempotent(request) ? 1
+                : lane == Lane.SCAN ? SCAN_MAX_ATTEMPTS : INTERACTIVE_MAX_ATTEMPTS;
         for (int attempt = 1; ; attempt++) {
-            try {
-                HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            try (GitHubResilience.Permit permit = resilience.acquire(lane)) {
+                HttpResponse<InputStream> response;
+                try {
+                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                } catch (IOException e) {
+                    permit.failure(e);
+                    throw e;
+                }
                 int status = response.statusCode();
+                if (status >= 500) {
+                    permit.failure(new IOException("GitHub responded " + status));
+                } else {
+                    permit.success();
+                }
                 recordRateLimit(response.headers());
 
                 if (status == 403 || status == 429) {
@@ -77,25 +110,27 @@ public class GitHubHttpClient {
                     if (waitMillis >= 0 || status == 429) {
                         closeQuietly(response.body());
                         long maxWait = properties.getMaxRateLimitWaitSeconds() * 1000L;
-                        if (waitMillis >= 0 && waitMillis <= maxWait && attempt < MAX_ATTEMPTS) {
+                        if (lane == Lane.SCAN && waitMillis >= 0 && waitMillis <= maxWait && attempt < maxAttempts) {
                             log.info("GitHub rate limit hit, waiting {} ms", waitMillis);
-                            sleep(waitMillis);
+                            // Sınır sıfırlanınca tüm işçiler aynı anda dönmesin
+                            sleep(waitMillis + ThreadLocalRandom.current().nextLong(1_000));
                             continue;
                         }
-                        throw ApiException.tooManyRequests(
-                                "GitHub API rate limit exceeded" + resetHint(response.headers()) + ". Please try again later");
+                        throw ApiException.tooManyRequests("GITHUB_RATE_LIMITED",
+                                "GitHub API rate limit exceeded" + resetHint(response.headers()) + ". Please try again later",
+                                waitMillis > 0 ? (waitMillis + 999) / 1000 : 60);
                     }
                     return response; // rate-limit değil: gerçek 403 (yetki)
                 }
 
-                if (status >= 500 && attempt < MAX_ATTEMPTS) {
+                if (status >= 500 && attempt < maxAttempts) {
                     closeQuietly(response.body());
                     sleep(backoffMillis(attempt));
                     continue;
                 }
                 return response;
             } catch (IOException e) {
-                if (attempt >= MAX_ATTEMPTS) {
+                if (attempt >= maxAttempts) {
                     throw ApiException.badGateway("Could not reach GitHub: " + e.getClass().getSimpleName());
                 }
                 sleep(backoffMillis(attempt));
@@ -104,6 +139,16 @@ public class GitHubHttpClient {
                 throw ApiException.serviceUnavailable("Scan was interrupted");
             }
         }
+    }
+
+    /**
+     * Yeniden denemesi güvenli istekler: GET/HEAD ve blame için kullanılan GraphQL sorgusu (POST ama salt okuma;
+     * projede GraphQL mutation yok). Diğer POST/PUT/DELETE istekleri tek denemedir.
+     */
+    static boolean isIdempotent(HttpRequest request) {
+        String method = request.method();
+        return "GET".equals(method) || "HEAD".equals(method)
+                || ("POST".equals(method) && request.uri().getPath().endsWith("/graphql"));
     }
 
     private void recordRateLimit(HttpHeaders headers) {
@@ -157,8 +202,13 @@ public class GitHubHttpClient {
         }
     }
 
-    private static long backoffMillis(int attempt) {
-        return 1000L * (1L << (attempt - 1)); // 1s, 2s, 4s
+    /**
+     * Üstel geri çekilme + jitter: taban 1, 2, 4 sn; gerçek bekleme tabanın %50–%150'si. Jitter, GitHub
+     * toparlanırken tüm işçilerin aynı anda yeniden denemesini (thundering herd) önler.
+     */
+    static long backoffMillis(int attempt) {
+        long base = 1000L * (1L << (attempt - 1));
+        return base / 2 + ThreadLocalRandom.current().nextLong(base + 1);
     }
 
     private static void sleep(long millis) {

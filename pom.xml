@@ -31,6 +31,8 @@
         <argLine></argLine>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
+        <resilience4j.version>2.3.0</resilience4j.version>
+        <shedlock.version>7.0.0</shedlock.version>
     </properties>
     <dependencies>
         <dependency>
@@ -62,6 +64,34 @@
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- GitHub çağrıları için bulkhead + circuit breaker (Faz 3). Yalnızca çekirdek modüller:
+             Spring starter'ı Boot 4'ü desteklemiyor, ayrıca anotasyon/AOP sihri gerekmiyor. -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-circuitbreaker</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-bulkhead</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-micrometer</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <!-- Zamanlanmış işler için dağıtık kilit (Postgres tablosu); 2+ instance'ta çift çalışma olmaz -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>${shedlock.version}</version>
         </dependency>
         <!-- Yapılandırılmış (JSON) log -->
         <dependency>

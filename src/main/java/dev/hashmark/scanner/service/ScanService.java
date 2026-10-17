@@ -16,11 +16,14 @@ public class ScanService {
     private final RepoRepository repoRepository;
     private final ScanJobRepository scanJobRepository;
     private final ConsentService consentService;
+    private final ScanQuotaService quotaService;
 
-    public ScanService(RepoRepository repoRepository, ScanJobRepository scanJobRepository, ConsentService consentService) {
+    public ScanService(RepoRepository repoRepository, ScanJobRepository scanJobRepository, ConsentService consentService,
+                       ScanQuotaService quotaService) {
         this.repoRepository = repoRepository;
         this.scanJobRepository = scanJobRepository;
         this.consentService = consentService;
+        this.quotaService = quotaService;
     }
 
     /** İşi kalıcı kuyruğa ekler; çalıştırmayı {@code ScanJobDispatcher} üstlenir. */
@@ -31,6 +34,7 @@ public class ScanService {
             throw ApiException.badRequest("Repository is not tracked; add it first");
         }
         consentService.requirePrivateRepoAck(repo);
+        quotaService.checkCanScan(userId, repo);
 
         ScanJob job;
         try {

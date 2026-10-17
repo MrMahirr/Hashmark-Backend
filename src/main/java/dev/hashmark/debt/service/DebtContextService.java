@@ -100,7 +100,7 @@ public class DebtContextService {
                 .timeout(Duration.ofSeconds(20))
                 .GET().build();
 
-        HttpResponse<InputStream> response = http.send(request);
+        HttpResponse<InputStream> response = http.send(request, dev.hashmark.common.resilience.GitHubResilience.Lane.INTERACTIVE);
         try (InputStream body = response.body()) {
             int status = response.statusCode();
             if (status == 200) {

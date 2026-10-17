@@ -2,10 +2,25 @@ server:
   port: ${SERVER_PORT:8080}
   # Ters vekil (nginx) arkasında gerçek istemci IP'sini X-Forwarded-For'dan çözer (rate limit için).
   forward-headers-strategy: native
+  # X-Forwarded-For YALNIZCA bu adreslerden gelen istekte dikkate alınır (nginx konteyneri: Docker köprü ağı).
+  # İstemcinin kendisinin yazdığı X-Forwarded-For sahte IP üretemez; nginx gerçek IP'yi sona ekler, Tomcat sağdan
+  # ilk güvenilmeyen adresi alır. Ters vekil başka ağdaysa TRUSTED_PROXIES (regex) ile daraltın/genişletin.
+  tomcat:
+    remoteip:
+      internal-proxies: ${TRUSTED_PROXIES:127\.0\.0\.1|0:0:0:0:0:0:0:1|::1|172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+}
+      remote-ip-header: x-forwarded-for
+      protocol-header: x-forwarded-proto
+  # Düzgün kapanış: SIGTERM'de yeni bağlantı alınmaz, süren istekler bitirilir (en fazla
+  # spring.lifecycle.timeout-per-shutdown-phase). Taramalar ScanJobDispatcher.stop() ile kuyruğa geri bırakılır.
+  shutdown: graceful
 
 spring:
   config:
     import: optional:file:.env[.properties]
+  # Toplam kapanış ≈ scan.shutdown-grace-seconds + bu süre (web) + executor 5 sn. compose stop_grace_period (60 sn)
+  # bundan uzun olmalı; yoksa Docker SIGKILL gönderir ve taramalar kalp atışı zaman aşımıyla (5 dk) kurtarılır.
+  lifecycle:
+    timeout-per-shutdown-phase: ${SHUTDOWN_PHASE_TIMEOUT:20s}
   datasource:
     url: ${DATABASE_URL}
     username: ${DATABASE_USERNAME}
@@ -98,10 +113,40 @@ github:
   # Özel depo taraması için `repo` gerekir. Yalnızca açık depolar yeterliyse `public_repo,user:email` yapın.
   oauth-scope: ${GITHUB_OAUTH_SCOPE:repo,user:email}
 
-# Bellek içi hız sınırları (istek/dakika). nginx limit_req ile birlikte çalışır.
+# Bellek içi hız sınırı matrisi (istek/dakika, 0 = kapalı). nginx limit_req ile birlikte çalışır.
+# Ayrıntı: RateLimitFilter / AccountRateLimiter, docs/RESILIENCE.md
 rate-limit:
   auth-per-minute: ${RATE_LIMIT_AUTH_PER_MINUTE:30}   # /auth/** (IP başına)
   scan-per-minute: ${RATE_LIMIT_SCAN_PER_MINUTE:10}   # POST /scan/** (kullanıcı başına)
+  export-per-minute: ${RATE_LIMIT_EXPORT_PER_MINUTE:10}       # GET /debts/export (kullanıcı)
+  sync-per-minute: ${RATE_LIMIT_SYNC_PER_MINUTE:6}            # POST /repos/sync (kullanıcı)
+  context-per-minute: ${RATE_LIMIT_CONTEXT_PER_MINUTE:60}     # GET /debts/{id}/context (kullanıcı)
+  public-per-minute: ${RATE_LIMIT_PUBLIC_PER_MINUTE:120}      # /public/** (IP)
+  user-per-minute: ${RATE_LIMIT_USER_PER_MINUTE:600}          # kimlikli her istek (kullanıcı)
+  ip-per-minute: ${RATE_LIMIT_IP_PER_MINUTE:1200}             # her istek (IP)
+  refresh-per-account-per-minute: ${RATE_LIMIT_REFRESH_PER_ACCOUNT:20}  # POST /auth/refresh (hesap)
+  login-per-account-per-minute: ${RATE_LIMIT_LOGIN_PER_ACCOUNT:10}      # /auth/callback (GitHub hesabı)
+
+# Öncelikli yük atma: baskı altında yalnızca pahalı uçlar (tarama başlatma, export, senkron, bağlam) 503 alır.
+load-shedding:
+  enabled: ${LOAD_SHEDDING_ENABLED:true}
+  db-pending-threshold: ${LOAD_SHEDDING_DB_PENDING:1}   # havuzda bağlantı bekleyen iş parçacığı sayısı
+  max-inflight: ${LOAD_SHEDDING_MAX_INFLIGHT:100}        # bu instance'ta eşzamanlı istek (Tomcat iş parçacığı 200)
+
+# GitHub çağrıları: bulkhead (iki ayrı şerit) + circuit breaker. Ayrıntı: docs/RESILIENCE.md
+resilience:
+  github:
+    interactive-max-concurrent: ${GITHUB_INTERACTIVE_MAX_CONCURRENT:20}
+    interactive-max-wait-ms: 200
+    scan-max-concurrent: ${GITHUB_SCAN_MAX_CONCURRENT:8}
+    scan-max-wait-ms: 2000
+    failure-rate-threshold: 50
+    slow-call-duration-ms: 8000
+    slow-call-rate-threshold: 80
+    minimum-number-of-calls: 10
+    sliding-window-size: 20
+    open-state-wait-ms: 30000
+    permitted-calls-in-half-open: 3
 
 # Anahtar dönüşü: yeni anahtar *_SECRET'e, eskisi *_PREVIOUS_SECRETS'e (virgülle) yazılır. Adımlar: docs/KEY_ROTATION.md
 jwt:
@@ -171,4 +216,15 @@ scan:
   max-attempts: 3                   # bir işin en fazla deneme sayısı
   blame-max-files: 25               # taramada git blame için en fazla dosya (0 = kapalı)
   max-rate-limit-wait-seconds: 60   # GitHub limiti için beklenebilecek en uzun süre
+  # Geçici hata (GitHub kesintisi/rate-limit/sistem yoğun): iş FAILED yerine ertelenir (30 sn × 2^n, en fazla 15 dk)
+  max-deferrals: 8
+  defer-base-seconds: 30
+  defer-max-seconds: 900
+  shutdown-grace-seconds: ${SCAN_SHUTDOWN_GRACE_SECONDS:15}   # kapanışta çalışan taramalar için bekleme
+  max-queue-depth: ${SCAN_MAX_QUEUE_DEPTH:500}                # tüm kullanıcılar; dolunca 503 SCAN_QUEUE_FULL
+  quota:
+    max-active-per-user: ${SCAN_QUOTA_ACTIVE_PER_USER:3}      # kuyrukta + çalışan
+    max-per-day: ${SCAN_QUOTA_PER_DAY:50}                     # son 24 saat
+    max-tracked-repos: ${SCAN_QUOTA_TRACKED_REPOS:50}
+    max-repo-size-mb: ${SCAN_QUOTA_REPO_SIZE_MB:1024}         # GitHub'ın bildirdiği boyut
   excluded-dirs: node_modules,vendor,dist,build,out,target,.git,.next,.nuxt,.gradle,.idea,.vscode,coverage,__pycache__,.venv,venv,site-packages,bower_components,Pods,third_party,third-party
