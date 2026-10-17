@@ -1,6 +1,7 @@
 package dev.hashmark.scanner.service;
 
 import dev.hashmark.common.exception.ApiException;
+import dev.hashmark.common.util.LogSafe;
 import dev.hashmark.scanner.config.ScanProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -151,7 +152,8 @@ public class GitHubFileService {
                 } catch (Exception e) {
                     failed++;
                     keepOpen.add(path);
-                    log.warn("Failed to process file {} of {}", path, repoFullName, e);
+                    // İstisna mesajı dosya içeriğinden parça taşıyabilir (K1/K2): yalnızca tür + konum.
+                    log.warn("Failed to process file {} of {}: {}", path, repoFullName, LogSafe.describe(e));
                 }
 
                 if (progress != null && (scanned + failed) % PROGRESS_EVERY == 0) {

@@ -16,6 +16,7 @@ Değerler **başlangıç** değerleridir; ölçüm (Faz 1 yük testi, `pg_stat_s
 | `random_page_cost` | 1.1 | — | SSD; indeks taramasını doğru fiyatlar. |
 | `log_autovacuum_min_duration` | 10s | — | Uzun süren vakumlar logda görünür. |
 | `track_io_timing` | on | — | `EXPLAIN (ANALYZE, BUFFERS)` ve `pg_stat_statements` I/O süresini gösterir. |
+| `log_parameter_max_length` / `log_error_verbosity` | 0 / terse | — | Loglara yorum metni düşmesin (bölüm 4). |
 | `autovacuum_vacuum_scale_factor` / `analyze_scale_factor` | 0.05 | — | Varsayılan 0.2: 100 bin satırlık `debts`'te vakum ancak 20 bin ölü satırda başlar. Tarama her seferinde çözülen satırları günceller; 0.05 daha erken temizler. |
 | `shm_size` (compose) | 256mb | — | Paralel sorgular `/dev/shm` kullanır; Docker varsayılanı 64 MB. |
 
@@ -76,6 +77,21 @@ Alarmlar (`monitoring/alerts.yml`): **DbAutovacuumLagging** (ölü satır >10 bi
    (çevrimiçi, kilitlemez). `VACUUM FULL` **kullanmayın** (tabloyu kilitler).
 4. **Doğrulama:** `n_dead_tup` düşer, alarm 6 saat içinde kapanır.
 
-## 4. Yavaş sorgular
+## 4. Veri minimizasyonu (loglarda yorum metni yok)
+
+Yorum metni (`debts.content`) ve commit yazarı adı **hiçbir logda** yer almamalı (plan 5.3). PG 18 + pgjdbc'de
+denendi; aşağıdaki ayarlar yokken üç yoldan sızıyordu:
+
+| Yol | Ayar | Nerede |
+|---|---|---|
+| Yavaş sorgu logu bağlı parametreleri yazar (`DETAIL: Parameters: $1 = '...'`) | `log_parameter_max_length=0` | compose |
+| Kısıt ihlali logu satırın tamamını yazar (`DETAIL: Failing row contains (..., yorum, ...)`) | `log_error_verbosity=terse` | compose |
+| pgjdbc aynı ayrıntıyı ve toplu yazımda parametreleri **istisna mesajına** gömer → uygulama logu + Sentry | `logServerErrorDetail=false` | `application.yml` (Hikari) |
+
+Ödünleşim: hata ayıklarken DETAIL/HINT görünmez; hata türü, kısıt adı ve sorgu metni (`$1` yer tutucularıyla) kalır.
+Denetim: `ComposePrivacyConfigTest` (bayraklar silinmesin), `DatabaseSessionSettingsTest` (gerçek PG'de istisnada
+içerik yok), `DataMinimizationTest` (tarama yolu loglarında kod/yorum yok, üretim kodunda disk yazımı yok).
+
+## 5. Yavaş sorgular
 `./scripts/pg-top-queries.sh` (en pahalı/en yavaş 10 sorgu) → `EXPLAIN (ANALYZE, BUFFERS)`.
 1 sn'den uzun her ifade Postgres logunda (`log_min_duration_statement=1000`).

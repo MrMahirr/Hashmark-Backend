@@ -25,6 +25,12 @@ services:
       - pg_stat_statements.track=all
       - -c
       - log_min_duration_statement=1000
+      # Veri minimizasyonu: yavaş sorgu logu bağlı parametreleri (yorum metni) yazmasın; hata logu
+      # DETAIL ("Failing row contains ...") satırını yazmasın. Sorgu metni yalnızca $1 yer tutucularıyla kalır.
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_error_verbosity=terse
       # Bellek
       - -c
       - shared_buffers=${PG_SHARED_BUFFERS:-256MB}

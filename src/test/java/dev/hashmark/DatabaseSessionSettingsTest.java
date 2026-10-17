@@ -123,6 +123,38 @@ class DatabaseSessionSettingsTest {
         }
     }
 
+    /**
+     * Veri minimizasyonu: pgjdbc varsayılan ayarda NOT NULL ihlalinde "Failing row contains (..., yorum, ...)"
+     * ayrıntısını ve toplu yazımda parametreleri istisna mesajına gömer (gerçek PG'de doğrulandı). Bu istisna
+     * tarama işçisinde loglanır ve Sentry'ye gider; logServerErrorDetail=false ile içerik mesajda yer almaz.
+     */
+    @Test
+    void failedBatchWriteDoesNotEmbedCommentInException() {
+        String secret = "SENTINEL_BATCH_COMMENT_" + "z9y8";
+        Long userId = jdbc.queryForObject(
+                "INSERT INTO users (github_id, email, name, github_token) VALUES (?, 'a@b.c', 'N', 't') RETURNING id",
+                Long.class, "gh-" + UUID.randomUUID());
+        Long repoId = jdbc.queryForObject(
+                "INSERT INTO repos (user_id, github_repo_id, full_name, tracked) VALUES (?, ?, 'o/r', TRUE) RETURNING id",
+                Long.class, userId, "r-" + UUID.randomUUID());
+        var debts = new dev.hashmark.debt.repository.DebtRepository(jdbc);
+        // label NULL → NOT NULL ihlali; sunucu satırın tamamını DETAIL'de döner
+        var bad = dev.hashmark.debt.model.Debt.builder().repoId(repoId).filePath("a.java").lineNo(1)
+                .label(null).content(secret).fingerprint("f").occurrence(0).build();
+
+        Exception ex = assertThrows(Exception.class,
+                () -> debts.replaceForRepo(repoId, java.util.List.of(bad), "a".repeat(40), null, null));
+        java.io.StringWriter trace = new java.io.StringWriter();
+        ex.printStackTrace(new java.io.PrintWriter(trace));
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof java.sql.SQLException sql && sql.getNextException() != null) {
+                sql.getNextException().printStackTrace(new java.io.PrintWriter(trace));
+            }
+        }
+        assertTrue(trace.toString().contains("not-null"), "hata türü görünmeli");
+        assertTrue(!trace.toString().contains(secret), "yorum metni istisna mesajına gömüldü:\n" + trace);
+    }
+
     @Test
     void tableHealthMetricsReadFromCatalog() {
         jdbc.execute("ANALYZE users");

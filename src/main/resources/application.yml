@@ -25,6 +25,11 @@ spring:
         SET statement_timeout = '${DB_STATEMENT_TIMEOUT:30s}';
         SET lock_timeout = '${DB_LOCK_TIMEOUT:10s}';
         SET idle_in_transaction_session_timeout = '${DB_IDLE_IN_TX_TIMEOUT:60s}'
+      # Veri minimizasyonu (K1/K2): pgjdbc varsayılan olarak sunucu hata ayrıntısını ("Failing row contains
+      # (..., <yorum metni>, ...)") ve toplu yazımda parametreleri istisna mesajına gömer; mesaj loga ve
+      # Sentry'ye gider. Kapalıyken yalnızca hata türü kalır (DataMinimization testleriyle doğrulandı).
+      data-source-properties:
+        logServerErrorDetail: false
   flyway:
     enabled: true
     locations: classpath:db/migration
