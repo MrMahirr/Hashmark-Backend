@@ -20,8 +20,8 @@ public class RestTemplateConfig {
                                      @Value("${http.client.connect-timeout-ms:3000}") long connectTimeoutMs,
                                      @Value("${http.client.read-timeout-ms:10000}") long readTimeoutMs) {
         return builder
-                .setConnectTimeout(Duration.ofMillis(connectTimeoutMs))
-                .setReadTimeout(Duration.ofMillis(readTimeoutMs))
+                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+                .readTimeout(Duration.ofMillis(readTimeoutMs))
                 .build();
     }
 }
