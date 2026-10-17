@@ -53,6 +53,15 @@ public class AppMetrics {
                 .record(duration);
     }
 
+    /** table: "scan_jobs", "scan_snapshots" veya "notifications". */
+    public void retentionDeleted(String table, int rows) {
+        Counter.builder("hashmark.retention.deleted")
+                .description("Saklama politikası gereği silinen satırlar")
+                .tag("table", table)
+                .register(registry)
+                .increment(rows);
+    }
+
     public void githubRateLimitRemaining(long remaining) {
         githubRateLimitRemaining.set(remaining);
     }

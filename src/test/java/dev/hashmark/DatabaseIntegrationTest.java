@@ -10,6 +10,7 @@ import dev.hashmark.debt.dto.PageResponse;
 import dev.hashmark.debt.dto.ReplaceResult;
 import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
+import dev.hashmark.notification.repository.NotificationRepository;
 import dev.hashmark.report.dto.TrendDataPoint;
 import dev.hashmark.report.repository.ReportRepository;
 import dev.hashmark.repo.repository.RepoRepository;
@@ -497,6 +498,106 @@ class DatabaseIntegrationTest {
         assertTrue(jobs.complete(job.getId(), "DONE", 0, 0, 0, 0, null, null));
         assertFalse(jobs.complete(job.getId(), "FAILED", 0, 0, 0, 0, null, "late"), "ikinci kapatma yok sayılır");
         assertEquals("DONE", jobs.findById(job.getId()).orElseThrow().getStatus());
+    }
+
+    // ------------------------------------------------------------------
+    // Veri yaşam döngüsü (retention)
+    // ------------------------------------------------------------------
+
+    private long insertJob(long repo, String status, String finishedAgo) {
+        return jdbc.queryForObject(
+                "INSERT INTO scan_jobs (repo_id, user_id, status, created_at, finished_at) " +
+                "VALUES (?, ?, ?, NOW() - CAST(? AS INTERVAL), NOW() - CAST(? AS INTERVAL)) RETURNING id",
+                Long.class, repo, userId, status, finishedAgo, finishedAgo);
+    }
+
+    @Test
+    void retentionDeletesOldFinishedJobsButKeepsLatestPerRepo() {
+        migrateAll();
+        long old1 = insertJob(repoId, "DONE", "200 days");
+        long old2 = insertJob(repoId, "FAILED", "150 days");
+        long recent = insertJob(repoId, "DONE", "10 days");
+        long otherRepo = jdbc.queryForObject(
+                "INSERT INTO repos (user_id, github_repo_id, full_name) VALUES (?, ?, 'o/x') RETURNING id",
+                Long.class, userId, "r-" + UUID.randomUUID());
+        long onlyJobOfOther = insertJob(otherRepo, "DONE", "300 days");
+        snapshots.save(repoId, old1, null, 1, Map.of(), 1, 0);
+
+        assertEquals(1, jobs.deleteFinishedOlderThan(90, 1), "parti sınırına uyar");
+        assertEquals(1, jobs.deleteFinishedOlderThan(90, 100));
+        assertEquals(0, jobs.deleteFinishedOlderThan(90, 100), "idempotent");
+
+        assertTrue(jobs.findById(old1).isEmpty());
+        assertTrue(jobs.findById(old2).isEmpty());
+        assertTrue(jobs.findById(recent).isPresent());
+        assertTrue(jobs.findById(onlyJobOfOther).isPresent(), "deponun son işi tarama durumu için korunur");
+        assertNull(jdbc.queryForObject("SELECT scan_job_id FROM scan_snapshots WHERE repo_id = ?", Long.class, repoId),
+                "snapshot kalır, iş bağlantısı boşalır");
+    }
+
+    @Test
+    void retentionNeverDeletesActiveJobs() {
+        migrateAll();
+        insertJob(repoId, "DONE", "200 days");
+        jdbc.update("INSERT INTO scan_jobs (repo_id, user_id, status, created_at) " +
+                    "VALUES (?, ?, 'PENDING', NOW() - INTERVAL '400 days')", repoId, userId);
+        assertEquals(1, jobs.deleteFinishedOlderThan(90, 100));
+        assertEquals(1, jobs.countPending());
+    }
+
+    private void insertSnapshot(String takenAt, int totalOpen, int added, int resolved) {
+        jdbc.update("INSERT INTO scan_snapshots (repo_id, taken_at, total_open, todo_count, added, resolved) " +
+                    "VALUES (?, CAST(? AS TIMESTAMP), ?, ?, ?, ?)", repoId, takenAt, totalOpen, totalOpen, added, resolved);
+    }
+
+    @Test
+    void retentionCompactsOldSnapshotsToWeeklyWithoutChangingTrend() {
+        migrateAll();
+        // 200 gün önceki haftanın salı/çarşamba/perşembesi + bir sonraki hafta + yakın tarih
+        LocalDate monday = LocalDate.now().minusDays(200).with(java.time.DayOfWeek.MONDAY);
+        insertSnapshot(monday.plusDays(1) + " 10:00", 5, 5, 0);
+        insertSnapshot(monday.plusDays(2) + " 10:00", 6, 2, 1);
+        insertSnapshot(monday.plusDays(3) + " 10:00", 7, 3, 2);
+        insertSnapshot(monday.plusDays(8) + " 10:00", 4, 0, 3);
+        insertSnapshot(LocalDate.now().minusDays(1) + " 10:00", 9, 5, 0);
+        LocalDate trendDay = monday.plusWeeks(3);
+        List<TrendDataPoint> before = reports.getTrendFromSnapshots(userId, null, trendDay);
+
+        assertEquals(2, snapshots.compactToWeekly(90));
+        assertEquals(0, snapshots.compactToWeekly(90), "idempotent");
+
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots", Integer.class));
+        Map<String, Object> week = jdbc.queryForMap(
+                "SELECT total_open, added, resolved FROM scan_snapshots WHERE taken_at < ?",
+                Timestamp.valueOf(monday.plusDays(7).atStartOfDay()));
+        assertEquals(7, week.get("total_open"), "haftanın son değeri");
+        assertEquals(10, week.get("added"), "haftanın toplamı");
+        assertEquals(3, week.get("resolved"));
+        assertEquals(before, reports.getTrendFromSnapshots(userId, null, trendDay), "trend değişmemeli");
+    }
+
+    @Test
+    void retentionDeletesSnapshotsOlderThanLimit() {
+        migrateAll();
+        insertSnapshot(LocalDate.now().minusMonths(25) + " 10:00", 1, 1, 0);
+        insertSnapshot(LocalDate.now().minusMonths(23) + " 10:00", 2, 1, 0);
+        assertEquals(1, snapshots.deleteOlderThanMonths(24, 100));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots", Integer.class));
+    }
+
+    @Test
+    void retentionDeletesOnlyOldReadNotifications() {
+        migrateAll();
+        String sql = "INSERT INTO notifications (user_id, title, description, type, is_read, created_at) " +
+                     "VALUES (?, 't', 'd', 'INFO', ?, NOW() - CAST(? AS INTERVAL))";
+        jdbc.update(sql, userId, true, "200 days");   // silinir
+        jdbc.update(sql, userId, false, "400 days");  // okunmamış: kalır
+        jdbc.update(sql, userId, true, "10 days");    // yeni: kalır
+        NotificationRepository notifications = new NotificationRepository(jdbc);
+
+        assertEquals(1, notifications.deleteReadOlderThan(180, 100));
+        assertEquals(0, notifications.deleteReadOlderThan(180, 100), "idempotent");
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM notifications", Integer.class));
     }
 
     @Test

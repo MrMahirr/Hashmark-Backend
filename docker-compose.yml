@@ -1,8 +1,16 @@
+# Docker log rotasyonu (veri saklama politikası): konteyner başına en fazla 5 × 10 MB.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # === PostgreSQL ===
   postgres:
     image: postgres:18-alpine
     container_name: hashmark_postgres
+    logging: *default-logging
     restart: unless-stopped
     # Yavaş sorgu analizi için (scripts/pg-top-queries.sh). Değişiklik Postgres yeniden başlatması ister.
     command:
@@ -36,6 +44,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: hashmark_backend
+    logging: *default-logging
     restart: unless-stopped
     # Kaynak sınırı: JVM -XX:MaxRAMPercentage=75 bu sınırı görür (OOM-kill yerine kontrollü heap).
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}

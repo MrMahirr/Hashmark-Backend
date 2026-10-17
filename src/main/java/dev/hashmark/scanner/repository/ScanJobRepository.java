@@ -126,6 +126,21 @@ public class ScanJobRepository {
                 + jdbcTemplate.update(fail, maxAttempts, timeoutMinutes);
     }
 
+    /**
+     * Saklama süresi dolmuş bitmiş işleri siler. Aktif işler ve her deponun en son işi (tarama durumu
+     * ucu onu gösterir) korunur. Snapshot'lardaki {@code scan_job_id} {@code ON DELETE SET NULL} ile boşalır.
+     *
+     * @return silinen satır sayısı (en fazla {@code limit})
+     */
+    public int deleteFinishedOlderThan(int days, int limit) {
+        String sql = "DELETE FROM scan_jobs WHERE id IN (" +
+                     "SELECT j.id FROM scan_jobs j WHERE j.status IN ('DONE', 'FAILED') " +
+                     "AND COALESCE(j.finished_at, j.created_at) < NOW() - (? * INTERVAL '1 day') " +
+                     "AND EXISTS (SELECT 1 FROM scan_jobs n WHERE n.repo_id = j.repo_id AND n.id > j.id) " +
+                     "ORDER BY j.id LIMIT ?)";
+        return jdbcTemplate.update(sql, days, limit);
+    }
+
     public Optional<ScanJob> findLatestByRepoId(Long repoId) {
         String sql = "SELECT * FROM scan_jobs WHERE repo_id = ? ORDER BY created_at DESC, id DESC LIMIT 1";
         return jdbcTemplate.query(sql, scanJobRowMapper, repoId).stream().findFirst();

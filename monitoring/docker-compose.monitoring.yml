@@ -4,10 +4,18 @@
 #   ssh -L 9090:localhost:9090 sunucu   (ve aşağıda `ports` satırını geçici olarak 127.0.0.1'e açın)
 # Backend metrikleri yönetim portundan (8081) çekilir; bu port nginx'te ve host'ta yayınlanmaz.
 
+# Docker log rotasyonu (veri saklama politikası): konteyner başına en fazla 5 × 10 MB.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: hashmark_prometheus
+    logging: *default-logging
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -25,6 +33,7 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.27.0
     container_name: hashmark_alertmanager
+    logging: *default-logging
     restart: unless-stopped
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
@@ -39,6 +48,7 @@ services:
   blackbox:
     image: prom/blackbox-exporter:v0.25.0
     container_name: hashmark_blackbox
+    logging: *default-logging
     restart: unless-stopped
     volumes:
       - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
@@ -48,6 +58,7 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.8.2
     container_name: hashmark_node_exporter
+    logging: *default-logging
     restart: unless-stopped
     command:
       - --path.rootfs=/host

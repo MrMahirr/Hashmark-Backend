@@ -109,6 +109,16 @@ async:
   max-pool-size: 5
   queue-capacity: 50
 
+# Veri saklama (plan Bölüm 5.6). Süreler gizlilik politikasında yazanla aynı olmalı.
+retention:
+  enabled: ${RETENTION_ENABLED:true}
+  cron: "0 30 4 * * *"              # her gün 04:30 (03:00 yedeğinden sonra)
+  scan-jobs-days: 90                # bitmiş işler (deponun son işi hariç)
+  snapshots-detail-days: 90         # bundan eskiler depo başına haftada tek satır
+  snapshots-months: 24              # bundan eskiler silinir
+  notifications-read-days: 180      # okunmuş bildirimler (okunmamışlar kalır)
+  batch-size: 5000
+
 scan:
   github-api-url: ${GITHUB_API_URL:https://api.github.com}
   max-file-size-bytes: 1048576      # bundan büyük dosyalar atlanır
