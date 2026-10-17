@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 public class GitHubResilienceProperties {
 
     /** Kullanıcı isteği yolundaki (giriş, repo listesi, bağlam) eşzamanlı GitHub çağrısı üst sınırı. */
-    private int interactiveMaxConcurrent = 20;
+    private int interactiveMaxConcurrent = 100;
     /** Kullanıcı yolu dolu ise izin için en fazla bekleme; sonra 503. İstek iş parçacığı asılı kalmasın. */
     private long interactiveMaxWaitMs = 200;
     /** Tarama işçilerinin (tarball, blame) eşzamanlı GitHub çağrısı üst sınırı. */
@@ -28,6 +28,6 @@ public class GitHubResilienceProperties {
     /** Kayan pencere: son N çağrı. */
     private int slidingWindowSize = 20;
     /** Açık devre bu süre sonra yarı açığa geçip deneme çağrılarına izin verir. */
-    private long openStateWaitMs = 30_000;
+    private long openStateWaitMs = 15_000;
     private int permittedCallsInHalfOpen = 3;
 }

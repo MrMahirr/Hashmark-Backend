@@ -18,12 +18,13 @@ ayakta kalır; pahalı işler (tarama, export, senkron) önce bekler ya da `429/
 
 ## 1. GitHub: bulkhead + circuit breaker
 
-- **İki şerit (bulkhead):** `interactive` (giriş, repo listesi, canlı bağlam; varsayılan 20 eşzamanlı, 200 ms
-  bekleme) ve `scan` (tarball, blame; 8 eşzamanlı, 2 sn bekleme). Tarama işçileri kullanıcı girişinin kapasitesini
+- **İki şerit (bulkhead):** `interactive` (giriş, repo listesi, canlı bağlam; varsayılan 100 eşzamanlı, 200 ms
+  bekleme; yük testiyle seçildi, bkz. §8) ve `scan` (tarball, blame; 8 eşzamanlı, 2 sn bekleme). Tarama işçileri kullanıcı girişinin kapasitesini
   tüketemez. Şerit doluysa `503 GITHUB_BUSY` (Retry-After 2).
 - **Tek devre:** son 20 çağrının ≥ %50'si hata (ağ hatası, zaman aşımı, 5xx) ya da ≥ %80'i 8 sn'den yavaşsa
-  (en az 10 çağrı) devre açılır. Açıkken çağrı GitHub'a hiç gitmez: `503 GITHUB_UNAVAILABLE` (Retry-After 30).
-  30 sn sonra yarı açık: 3 deneme çağrısı başarılıysa kapanır.
+  (en az 10 çağrı) devre açılır. Açıkken çağrı GitHub'a hiç gitmez: `503 GITHUB_UNAVAILABLE` (Retry-After 15).
+  15 sn sonra yarı açık: 3 deneme çağrısı başarılıysa kapanır. GitHub döndükten sonra en kötü toparlanma
+  gecikmesi ≈ okuma zaman aşımı (10 sn) + 15 sn (deneme çağrısı kesintinin son anına denk gelirse).
 - **4xx hata sayılmaz** (yetki, bulunamadı, rate-limit GitHub'ın ayakta olduğunu gösterir).
 - RestTemplate yolundaki ağ hataları artık `500` yerine `502` döner.
 - Şerit izni yanıt **başlıkları** gelince bırakılır; tarball gövde akışı tarama süresi sınırıyla korunur.
@@ -134,12 +135,28 @@ CPU/JIT ısınmasıydı, sorgu değil; sorgu/önbellek yatırımı **gerekmedi**
 `ETag` tetikleyicisi: dashboard p95 > 500 ms ve indeksle düzelmiyor (plan Bölüm 7). Önbellek eklenirse triyaj ve
 tarama sonrası kullanıcı bazlı geçersizleştirme şarttır (yoksa kullanıcı az önce değiştirdiğini eski görür).
 
+## 8. Yük testi ölçümleri (2026-10-17, yerel Docker: backend 1 CPU / 1 GB, PG 1 CPU / 512 MB)
+
+`./loadtest/run.sh login|outage|shed` (sahte GitHub, 150 ms gecikme). Sonuçlar gerçek VDS değil, bu sınırlı ortamdır.
+
+| Senaryo | Sonuç | Karar |
+|---|---|---|
+| 500 eşzamanlı giriş, kullanıcı şeridi **20** | callback'lerin **%41'i** `503 GITHUB_BUSY` (8.017 red); devre kapalı, 5xx yok | Şerit darboğaz → **100** |
+| Aynı, şerit **100** | %97,2 başarı; kalan redler şerit dolu (226) + DB havuzu (89), hepsi 503; CPU %90 | Varsayılan 100 |
+| GitHub kesintisi (60 sn, yanıt yok) + 100 giriş + 100 okuyucu | Kesintide giriş **hızlı 503, p95 6,7 ms** (devre açılana kadar 63–73 istek 10 sn sonra 502); okumalar **%100, p95 37–47 ms** | Devre amacını yerine getiriyor |
+| Aynı, toparlanma (açık bekleme 30 sn → 15 sn) | GitHub dönünce 30 sn'lik pencerede başarılı giriş 670 → **1.035**, 503: 2.018 → 1.526 | Varsayılan 15 sn |
+| Stres: dashboard 200 kullanıcı + 20 sürekli export, havuz 5 | Export'ların 2.310/2.312'si `503 OVERLOADED` (db_pool 1.223, inflight 1.087); dashboard %99,85; 5xx yok | Yük atma doğru |
+| Normal: dashboard 50 kullanıcı + 20 export, havuz 15 (ısınmalı) | Export **2.360/2.360 başarılı**, dashboard %100, p95 10 ms; ölçüm penceresinde yük atma yok | Yanlış pozitif yok |
+
+k6 tek IP'den geldiği için koşucu IP/kullanıcı/hesap hız sınırlarını kapatır (`run.sh`). Soğuk JVM'in ilk ~20 sn'si
+(JIT ısınması) tüm senaryolarda yavaştır (Faz 1 bulgusu, karar bekliyor).
+
 ## Runbook: GitHub kesintisi
 
 **Belirti:** `GithubCircuitOpen` alarmı; girişte `503 GITHUB_UNAVAILABLE`; taramalar "Retrying in …" mesajıyla bekliyor.
 1. **Teşhis:** https://www.githubstatus.com · `curl -s backend:8081/actuator/prometheus | grep -E 'circuitbreaker_state|github_rejected'`
    · `docker compose logs backend | grep "GitHub circuit breaker"` (durum geçişleri loglanır).
-2. **Müdahale:** genellikle gerekmez. Devre 30 sn'de bir yarı açılıp dener, GitHub dönünce kendiliğinden kapanır;
+2. **Müdahale:** genellikle gerekmez. Devre 15 sn'de bir yarı açılıp dener, GitHub dönünce kendiliğinden kapanır;
    ertelenen taramalar `run_after` dolunca sırayla devam eder (en fazla 8 erteleme ≈ 1 saat). Kesinti uzunsa
    `FAILED` işler kullanıcı tarafından yeniden başlatılabilir.
 3. **Yanlış alarm şüphesi** (GitHub ayakta ama devre açık): ağ/DNS/egress'i kontrol edin

@@ -136,7 +136,9 @@ load-shedding:
 # GitHub çağrıları: bulkhead (iki ayrı şerit) + circuit breaker. Ayrıntı: docs/RESILIENCE.md
 resilience:
   github:
-    interactive-max-concurrent: ${GITHUB_INTERACTIVE_MAX_CONCURRENT:20}
+    # Yük testiyle seçildi: 20'de 500 eşzamanlı girişin %41'i 503 GITHUB_BUSY aldı; 100'de %97 başarı.
+    # Tomcat 200 iş parçacığının yarısı okumalara kalır (GitHub yavaşlarsa girişler okumaları boğamaz).
+    interactive-max-concurrent: ${GITHUB_INTERACTIVE_MAX_CONCURRENT:100}
     interactive-max-wait-ms: 200
     scan-max-concurrent: ${GITHUB_SCAN_MAX_CONCURRENT:8}
     scan-max-wait-ms: 2000
@@ -145,7 +147,8 @@ resilience:
     slow-call-rate-threshold: 80
     minimum-number-of-calls: 10
     sliding-window-size: 20
-    open-state-wait-ms: 30000
+    # Yük testi: 30 sn'de GitHub döndükten sonra girişlerin çoğu ~25 sn daha 503 aldı (devre son anda yeniden açıldı)
+    open-state-wait-ms: 15000
     permitted-calls-in-half-open: 3
 
 # Anahtar dönüşü: yeni anahtar *_SECRET'e, eskisi *_PREVIOUS_SECRETS'e (virgülle) yazılır. Adımlar: docs/KEY_ROTATION.md
