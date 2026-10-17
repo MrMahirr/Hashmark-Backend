@@ -196,6 +196,8 @@ class RowLevelSecurityTest {
         healthMetrics.bindTo(registry);
         assertEquals(1.0, registry.get("hashmark.db.rls.enforced").gauge().value());
         assertTrue(registry.get("hashmark.db.table.size.bytes").tag("table", "debts").gauge().value() > 0);
+        // pg_stat_archiver süper kullanıcı olmayan rolle de okunur (test sunucusunda arşiv kapalı → hata yok)
+        assertEquals(0.0, registry.get("hashmark.db.wal.archive.failing").gauge().value());
         assertEquals(Boolean.FALSE, jdbc.queryForObject(
                 "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user", Boolean.class));
     }

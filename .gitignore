@@ -35,6 +35,8 @@ build/
 ### Environment Variables ###
 .env*
 !.env.example
+# PITR deposu sırları (örnek: postgres/pitr.env.example)
+pitr.env
 
 ### SSL Certificates ###
 nginx/ssl/*.pem

@@ -8,10 +8,16 @@ x-logging: &default-logging
 services:
   # === PostgreSQL ===
   postgres:
-    image: postgres:18-alpine
+    # Resmi postgres:18-alpine + pgBackRest (PITR). Ayrıntı: docs/PITR.md
+    build:
+      context: ./postgres
+    image: hashmark-postgres:18
     container_name: hashmark_postgres
     logging: *default-logging
     restart: unless-stopped
+    # PID 1 = tini. pgBackRest'in asenkron arşiv süreci arka plana çatallanır; init yoksa yetim süreç postmaster'a
+    # kalır ve hata koduyla çıktığında PostgreSQL bunu ÇÖKME sayıp tüm bağlantıları düşürür (yerel testte görüldü).
+    init: true
     # Sunucu ayarları (Faz 2 ince ayar). Bellek değerleri ~2–4 GB'lık tek sunucu içindir (backend 1 GB alır);
     # sunucu büyürse .env'den yükseltin: shared_buffers ≈ Postgres'e ayrılan RAM'in %25'i,
     # effective_cache_size ≈ %50–75'i. Değişiklik Postgres yeniden başlatması ister (docker compose up -d postgres).
@@ -59,12 +65,41 @@ services:
       - autovacuum_vacuum_scale_factor=0.05
       - -c
       - autovacuum_analyze_scale_factor=0.05
+      # PITR (docs/PITR.md): WAL sürekli arşivlenir. Depo (pitr.env) yoksa pgbackrest-archive-push.sh WAL'ı atar, birikmez.
+      # archive_timeout: trafik azken de en geç 5 dk'da bir WAL kapanıp arşive gider (RPO ≈ 5 dk).
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=/usr/local/bin/pgbackrest-archive-push.sh %p
+      - -c
+      - archive_timeout=${PG_ARCHIVE_TIMEOUT:-5min}
     # Paralel sorgular /dev/shm kullanır; Docker varsayılanı (64 MB) work_mem ile yetmeyebilir.
     shm_size: 256mb
+    # PITR deposu ve sırları (S3 anahtarı, şifreleme parolası) yalnızca bu dosyada; örnek: postgres/pitr.env.example.
+    # Dosya yoksa PITR kapalıdır. (env_file required:false → Docker Compose 2.24+)
+    env_file:
+      - path: ./pitr.env
+        required: false
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-hashmark}
       POSTGRES_USER: ${POSTGRES_USER:-hashmark}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # pgBackRest'in sır içermeyen sabit ayarları (pitr.env bunları ezebilir)
+      PGBACKREST_STANZA: hashmark
+      PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
+      PGBACKREST_PG1_USER: ${POSTGRES_USER:-hashmark}
+      PGBACKREST_PG1_DATABASE: ${POSTGRES_DB:-hashmark}
+      PGBACKREST_ARCHIVE_ASYNC: "y"
+      PGBACKREST_SPOOL_PATH: /var/spool/pgbackrest
+      # Depo ulaşılamazsa WAL en fazla bu kadar birikir, sonra atılır (disk dolmasın; o aralıkta PITR boşluğu oluşur)
+      PGBACKREST_ARCHIVE_PUSH_QUEUE_MAX: 2GiB
+      PGBACKREST_COMPRESS_TYPE: zst
+      PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+      PGBACKREST_REPO1_RETENTION_FULL_TYPE: time
+      PGBACKREST_REPO1_RETENTION_FULL: ${PITR_RETENTION_DAYS:-14}
+      PGBACKREST_LOG_LEVEL_CONSOLE: info
+      PGBACKREST_LOG_LEVEL_FILE: "off"
+      PGBACKREST_PROCESS_MAX: "2"
     volumes:
       # PG18 imajı veriyi /var/lib/postgresql/18/docker altında tutar; bu yüzden üst dizin bağlanır.
       # Yeni volume adı: eski PG16 volume'u (postgres_data) geri dönüş için dokunulmadan kalır.

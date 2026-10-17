@@ -59,6 +59,14 @@ public class DatabaseHealthMetrics implements MeterBinder {
                 })
                 .description("1: uygulama rolü RLS'e tabi (ayrı, sahip olmayan rol); 0: politika atlanıyor")
                 .register(registry);
+        // PITR (docs/PITR.md): son arşiv denemesi başarısız mı? Trafik yokken "son başarı yaşı" yanıltıcı olacağı
+        // için yaş değil, son hatanın son başarıdan yeni olup olmadığı izlenir.
+        Gauge.builder("hashmark.db.wal.archive.failing", () -> archiver("SELECT (last_failed_time IS NOT NULL AND "
+                        + "(last_archived_time IS NULL OR last_failed_time > last_archived_time))::int FROM pg_stat_archiver"))
+                .description("1: son WAL arşivleme denemesi başarısız (depo erişilemiyor / stanza yok)")
+                .register(registry);
+        Gauge.builder("hashmark.db.wal.archive.failed", () -> archiver("SELECT failed_count FROM pg_stat_archiver"))
+                .description("Sunucu açılışından beri başarısız WAL arşivleme denemesi").register(registry);
         for (String table : TABLES) {
             gauge(registry, "hashmark.db.table.live.rows", "Tablodaki canlı satır (tahmini)", table, TableStats::liveRows);
             gauge(registry, "hashmark.db.table.dead.rows", "Vakum bekleyen ölü satır", table, TableStats::deadRows);
@@ -77,6 +85,16 @@ public class DatabaseHealthMetrics implements MeterBinder {
                 .description(description)
                 .tag("table", table)
                 .register(registry);
+    }
+
+    private double archiver(String sql) {
+        try {
+            Number n = jdbc.queryForObject(sql, Number.class);
+            return n == null ? Double.NaN : n.doubleValue();
+        } catch (Exception e) {
+            log.warn("WAL arşiv durumu okunamadı: {}", e.getClass().getSimpleName());
+            return Double.NaN;
+        }
     }
 
     /** Rol çalışırken değişmez; bir kez başarıyla okunduktan sonra önbellekte kalır. */

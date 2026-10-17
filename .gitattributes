@@ -1,2 +1,5 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+# Konteyner içinde çalışan betikler: Windows checkout CRLF yaparsa sh/bash bozulur
+*.sh text eol=lf
+postgres/* text eol=lf

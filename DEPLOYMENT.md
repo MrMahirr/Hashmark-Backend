@@ -338,6 +338,10 @@ gunzip < backups/hashmark_backup_YYYYMMDD_HHMMSS.sql.gz | \
 
 ---
 
+### PITR (belirli bir ana geri dönme)
+Gece `pg_dump`'ına ek olarak WAL sürekli, şifreli ve sunucu dışı bir S3 deposuna arşivlenir (RPO ≈ 5 dk,
+14 gün pencere). Kurulum, cron, olay anında geri yükleme ve tatbikat: `docs/PITR.md`.
+
 ### Yedeği doğrulama
 ```bash
 ./scripts/restore-test.sh          # en yeni yedeği geçici Postgres'e yükler, süreyi ve satır sayılarını yazar

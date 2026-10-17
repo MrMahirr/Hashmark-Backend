@@ -130,3 +130,54 @@ tests:
             exp_annotations:
               summary: "Otomatik vakum geride: debts"
               description: "6 saattir ölü satır oranı %20'nin üstünde. Uzun açık transaction (idle in transaction) vakumu engelliyor olabilir; docs/POSTGRES_TUNING.md → 'Vakum geride'."
+
+  - name: WAL arşivi 15 dk başarısızsa alarm, kısa aksaklıkta alarm yok
+    interval: 1m
+    input_series:
+      - series: 'hashmark_db_wal_archive_failing{job="backend"}'
+        values: '0 1x5 0x5 1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WalArchivingFailing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: WalArchivingFailing
+        exp_alerts:
+          - exp_labels: { severity: critical, job: backend }
+            exp_annotations:
+              summary: "WAL arşivlenemiyor (PITR)"
+              description: "15 dakikadır son arşiv denemesi başarısız. Depo/anahtar erişimi ya da stanza: docker logs hashmark_postgres | grep archive-push. WAL 2 GiB birikince atılır ve PITR boşluğu oluşur (docs/PITR.md)."
+
+  - name: tatbikat 100 günü geçince alarm
+    interval: 4m   # 5 dk bakış penceresinden kısa olmalı (seri bayatlamasın)
+    input_series:
+      - series: 'hashmark_restore_drill_last_success_timestamp_seconds'
+        values: '0x37000'
+    alert_rule_test:
+      - eval_time: 90d
+        alertname: RestoreDrillOverdue
+        exp_alerts: []
+      - eval_time: 101d
+        alertname: RestoreDrillOverdue
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Geri yükleme tatbikatı gecikti (>100 gün)"
+              description: "Üç ayda bir tatbikat şartı (plan Faz 2): ./scripts/pitr-restore-test.sh çalıştırın, sonucu Hashmark-Vault'a yazın."
+
+  - name: PITR yedeği 26 saati geçince alarm
+    interval: 1m
+    input_series:
+      - series: 'hashmark_pitr_backup_last_success_timestamp_seconds'
+        values: '0x2000'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: PitrBackupStale
+        exp_alerts: []
+      - eval_time: 28h
+        alertname: PitrBackupStale
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "26 saattir başarılı PITR temel yedeği yok"
+              description: "Cron çalışmıyor olabilir. Temel yedek eskidikçe geri yükleme daha çok WAL oynatır ve uzar."
