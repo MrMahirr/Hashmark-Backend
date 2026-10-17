@@ -1,0 +1,14 @@
+# YALNIZCA YEREL GELİŞTİRME. Üretimde KULLANMAYIN (sunucuda port açar).
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# Portlar yalnızca 127.0.0.1'e açılır: frontend `npm run dev` → http://localhost:8080,
+# IDE/psql → localhost:5432. IDE'den backend çalıştıracaksanız backend konteynerini durdurun
+# (docker compose stop backend), aksi hâlde 8080 çakışır.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+  backend:
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - SWAGGER_ENABLED=true
