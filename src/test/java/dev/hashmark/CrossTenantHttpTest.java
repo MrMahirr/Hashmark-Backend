@@ -132,6 +132,8 @@ class CrossTenantHttpTest {
                 new Attempt(HttpMethod.GET, "/repos/" + repoB, null),
                 new Attempt(HttpMethod.POST, "/repos/" + repoB + "/track", null),
                 new Attempt(HttpMethod.PUT, "/repos/" + repoB + "/branch", "{\"branch\":\"evil\"}"),
+                new Attempt(HttpMethod.PUT, "/repos/" + repoB + "/auto-scan", "{\"enabled\":true}"),
+                new Attempt(HttpMethod.PUT, "/repos/" + repoB + "/auto-scan", "{\"enabled\":false}"),
                 new Attempt(HttpMethod.DELETE, "/repos/" + repoB, null),
                 new Attempt(HttpMethod.POST, "/scan/" + repoB, null),
                 new Attempt(HttpMethod.GET, "/scan/" + repoB + "/status", null),
@@ -201,7 +203,8 @@ class CrossTenantHttpTest {
         assertEquals(null, jdbc.queryForObject("SELECT assigned_to FROM debts WHERE id = ?", String.class, debtB));
         assertEquals(Boolean.FALSE,
                 jdbc.queryForObject("SELECT is_read FROM notifications WHERE id = ?", Boolean.class, notificationB));
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM repos WHERE id = ? AND tracked AND tracked_branch IS NULL",
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM repos WHERE id = ? AND tracked AND tracked_branch IS NULL " +
+                "AND webhook_secret IS NULL AND webhook_id IS NULL",
                 Integer.class, repoB));
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM scan_jobs WHERE repo_id = ?", Integer.class, repoB));
         assertFalse(jdbc.queryForObject("SELECT count(*) FROM debts WHERE repo_id = ?", Integer.class, repoB) == 0);

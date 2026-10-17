@@ -126,6 +126,13 @@ rate-limit:
   ip-per-minute: ${RATE_LIMIT_IP_PER_MINUTE:1200}             # her istek (IP)
   refresh-per-account-per-minute: ${RATE_LIMIT_REFRESH_PER_ACCOUNT:20}  # POST /auth/refresh (hesap)
   login-per-account-per-minute: ${RATE_LIMIT_LOGIN_PER_ACCOUNT:10}      # /auth/callback (GitHub hesabı)
+  webhook-per-minute: ${RATE_LIMIT_WEBHOOK_PER_MINUTE:60}     # /webhooks/** (depo adresi başına; IP/kullanıcı tabanı uygulanmaz)
+
+# Otomatik tarama (GitHub push webhook). GitHub'ın ulaşabileceği API kökü; boşsa otomatik tarama kapalıdır.
+# Üretim: https://<alan-adı>/api/v1  →  hook adresi <public-url>/webhooks/github/<repoId>
+webhooks:
+  public-url: ${WEBHOOK_PUBLIC_URL:}
+  max-payload-bytes: 5242880
 
 # Öncelikli yük atma: baskı altında yalnızca pahalı uçlar (tarama başlatma, export, senkron, bağlam) 503 alır.
 load-shedding:

@@ -305,4 +305,53 @@ class RowLevelSecurityTest {
         assertEquals(java.sql.Date.valueOf(today), owner.queryForObject(
                 "SELECT last_digest_sent_on FROM " + SCHEMA + ".user_settings WHERE user_id = ?", java.sql.Date.class, userA));
     }
+
+    /**
+     * Kimliksiz webhook isteği: depo sistem kapsamında bulunur, iş sahibinin kapsamında kuyruğa alınır; tarama
+     * sürerken gelen push birleştirilir ve işçi iş bitince yeni taramayı kendi kapsamında açar.
+     */
+    @Test
+    void pushWebhookQueuesAndCoalescesUnderRls() throws Exception {
+        String githubId = owner.queryForObject("SELECT github_repo_id FROM " + SCHEMA + ".repos WHERE id = ?",
+                String.class, repoA);
+        owner.update("UPDATE " + SCHEMA + ".repos SET webhook_id = 1, webhook_secret = ? WHERE id = ?",
+                crypto.encrypt("rls-secret"), repoA);
+        byte[] body = ("{\"ref\":\"refs/heads/main\",\"repository\":{\"id\":\"" + githubId
+                + "\",\"default_branch\":\"main\"}}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        java.util.function.Function<Long, String> deliver = repo -> {
+            try {
+                return mvc.perform(post("/webhooks/github/" + repo).header("X-GitHub-Event", "push")
+                                .header("X-Hub-Signature-256", dev.hashmark.webhook.WebhookSignature.sign("rls-secret", body))
+                                .contentType(MediaType.APPLICATION_JSON).content(body))
+                        .andReturn().getResponse().getContentAsString();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+
+        assertTrue(deliver.apply(repoA).contains("\"queued\""));
+        assertTrue(deliver.apply(repoB).contains("Unknown webhook"), "anahtarı olmayan depo 404");
+
+        // İş çalışıyormuş gibi: yeni push birleştirilir
+        owner.update("UPDATE " + SCHEMA + ".scan_jobs SET status = 'RUNNING' WHERE repo_id = ?", repoA);
+        assertTrue(deliver.apply(repoA).contains("coalesced"));
+        assertEquals(Boolean.TRUE, owner.queryForObject(
+                "SELECT rescan_requested FROM " + SCHEMA + ".repos WHERE id = ?", Boolean.class, repoA));
+
+        // Gerçek işçi taramayı bitirir ve isteği tüketip yeni PUSH işi açar
+        owner.update("UPDATE " + SCHEMA + ".scan_jobs SET status = 'PENDING' WHERE repo_id = ?", repoA);
+        dispatcher.tick();
+        long pushJobs = 0;
+        for (int i = 0; i < 100 && pushJobs < 2; i++) {
+            Thread.sleep(100);
+            pushJobs = ownerCount("SELECT count(*) FROM scan_jobs WHERE repo_id = ? AND triggered_by = 'PUSH'", repoA);
+        }
+        assertEquals(2L, pushJobs, "iş bitince yeniden tarama kuyruğa alınmalı");
+        assertEquals(1L, ownerCount("SELECT count(*) FROM scan_jobs WHERE repo_id = ? AND status = 'DONE'", repoA));
+        assertEquals(1L, ownerCount("SELECT count(*) FROM scan_jobs WHERE repo_id = ? AND status = 'PENDING'", repoA));
+        assertEquals(Boolean.FALSE, owner.queryForObject(
+                "SELECT rescan_requested FROM " + SCHEMA + ".repos WHERE id = ?", Boolean.class, repoA));
+        assertEquals(0L, ownerCount("SELECT count(*) FROM scan_jobs WHERE repo_id = ?", repoB));
+        owner.update("DELETE FROM " + SCHEMA + ".scan_jobs WHERE repo_id = ?", repoA);
+    }
 }

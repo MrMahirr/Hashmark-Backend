@@ -10,12 +10,14 @@ import dev.hashmark.consent.ConsentService;
 import dev.hashmark.notification.service.NotificationService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.scanner.config.RepoScanConfig;
 import dev.hashmark.scanner.config.ScanProperties;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.service.BlameEnrichmentService;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
+import dev.hashmark.scanner.service.ScanService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,9 +63,10 @@ class ScanJobProcessorDeferralTest {
         when(aes.decrypt("enc")).thenReturn("plain");
         when(repos.findByIdAndUserId(10L, 1L)).thenReturn(Optional.of(Repo.builder().id(10L).fullName("o/r").build()));
 
+        when(files.fetchRepoConfig(anyString(), anyString(), any())).thenReturn(RepoScanConfig.DEFAULT);
         processor = new ScanJobProcessor(jobs, mock(ScanResultWriter.class), files, mock(BlameEnrichmentService.class),
                 mock(DebtParserService.class), users, repos, aes, notifications, new AppMetrics(registry),
-                mock(ConsentService.class), props);
+                mock(ConsentService.class), props, mock(ScanService.class));
     }
 
     private ScanJob job(int deferrals) {
@@ -72,7 +75,20 @@ class ScanJobProcessorDeferralTest {
     }
 
     private void githubFails(ApiException e) {
-        when(files.scanRepository(anyString(), anyString(), any(), any(), any())).thenThrow(e);
+        when(files.scanRepository(anyString(), anyString(), any(), any(), any(), any())).thenThrow(e);
+    }
+
+    @Test
+    void outageWhileReadingRepoConfigAlsoDefers() {
+        // .hashmark.yml isteği taramadan önce gider; GitHub kesintisi orada da işi düşürmemeli
+        when(files.fetchRepoConfig(anyString(), anyString(), any()))
+                .thenThrow(ApiException.serviceUnavailable(GitHubResilience.CODE_UNAVAILABLE, "down", 30));
+        when(jobs.defer(eq(5L), eq(token), anyLong(), anyString())).thenReturn(true);
+
+        processor.process(job(0));
+
+        verify(jobs).defer(eq(5L), eq(token), anyLong(), anyString());
+        verify(files, never()).scanRepository(anyString(), anyString(), any(), any(), any(), any());
     }
 
     @Test

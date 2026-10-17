@@ -26,6 +26,10 @@ public class Repo {
     private Boolean tracked;
     /** GitHub'ın bildirdiği depo boyutu (KB); bilinmiyorsa null. */
     private Integer sizeKb;
+    /** GitHub push hook kimliği; null = otomatik tarama kapalı. */
+    private Long webhookId;
+    /** AES ile şifreli HMAC anahtarı; API yanıtına asla konmaz. */
+    private String webhookSecret;
 
     // Transient / calculated field
     private Integer debtCount;

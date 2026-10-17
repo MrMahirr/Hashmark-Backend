@@ -24,6 +24,8 @@ public class RepoDto {
     private String trackedBranch;
     private String lastScannedSha;
     private Boolean tracked;
+    /** Push webhook'u kurulu: izlenen dala her push'ta otomatik tarama. */
+    private Boolean autoScan;
     /** Açık borçların etiket kırılımı: {"TODO": 4, "FIXME": 1}. */
     private Map<String, Integer> debtBreakdown;
 }

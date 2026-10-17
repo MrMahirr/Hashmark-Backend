@@ -21,6 +21,7 @@ import dev.hashmark.scanner.service.BlameEnrichmentService;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
 import dev.hashmark.scanner.service.LabelRules;
+import dev.hashmark.scanner.service.ScanService;
 import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,14 +55,17 @@ public class ScanJobProcessor {
     private final AppMetrics metrics;
     private final ConsentService consentService;
     private final ScanProperties scanProperties;
+    private final ScanService scanService;
 
     public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanResultWriter scanResultWriter,
                             GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
                             DebtParserService debtParserService,
                             UserRepository userRepository, RepoRepository repoRepository,
                             AesEncryptionUtil aesEncryptionUtil, NotificationService notificationService,
-                            AppMetrics metrics, ConsentService consentService, ScanProperties scanProperties) {
+                            AppMetrics metrics, ConsentService consentService, ScanProperties scanProperties,
+                            ScanService scanService) {
         this.scanProperties = scanProperties;
+        this.scanService = scanService;
         this.metrics = metrics;
         this.consentService = consentService;
         this.scanJobRepository = scanJobRepository;
@@ -82,6 +86,27 @@ public class ScanJobProcessor {
             result = doProcess(job) ? "done" : "failed";
         } finally {
             metrics.scanFinished(result, java.time.Duration.ofNanos(System.nanoTime() - startNanos));
+        }
+        requeueIfRequested(job);
+    }
+
+    /** Tarama sürerken push geldiyse ({@code repos.rescan_requested}) en son commit için yeni iş açar. */
+    private void requeueIfRequested(ScanJob job) {
+        if (job.getUserId() == null) {
+            return;
+        }
+        try {
+            if (!repoRepository.consumeRescanRequest(job.getRepoId())) {
+                return;
+            }
+            repoRepository.findByIdAndUserId(job.getRepoId(), job.getUserId())
+                    .filter(repo -> Boolean.TRUE.equals(repo.getTracked()))
+                    .ifPresent(repo -> {
+                        ScanService.AutoScanResult queued = scanService.enqueueAutomatic(repo);
+                        log.info("Re-scan after push for repo {}: {}", repo.getId(), queued.outcome());
+                    });
+        } catch (Exception e) {
+            log.warn("Could not queue requested re-scan for repo {}", job.getRepoId(), e);
         }
     }
 

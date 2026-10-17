@@ -30,6 +30,8 @@ public class RepoRepository {
             .lastScannedSha(rs.getString("last_scanned_sha"))
             .tracked(rs.getBoolean("tracked"))
             .sizeKb(rs.getObject("size_kb") != null ? rs.getInt("size_kb") : null)
+            .webhookId(rs.getObject("webhook_id") != null ? rs.getLong("webhook_id") : null)
+            .webhookSecret(rs.getString("webhook_secret"))
             .build();
 
     /** Kullanıcı kotası: izlenen depo sayısı. */
@@ -143,5 +145,60 @@ public class RepoRepository {
     public int updateTrackedBranch(Long id, Long userId, String branch) {
         return jdbcTemplate.update("UPDATE repos SET tracked_branch = ? WHERE id = ? AND user_id = ?",
                 branch, id, userId);
+    }
+
+    // ------------------------------------------------------------------
+    // Push webhook (otomatik tarama)
+    // ------------------------------------------------------------------
+
+    /**
+     * Webhook teslimatı için depo (kimliksiz istek: çağıran sistem kapsamında çalışmalı). Yalnızca izlenen ve
+     * imza anahtarı olan depo döner.
+     */
+    public Optional<Repo> findWebhookTarget(Long id) {
+        return jdbcTemplate.query("SELECT * FROM repos WHERE id = ? AND tracked AND webhook_secret IS NOT NULL",
+                repoRowMapper, id).stream().findFirst();
+    }
+
+    /** Hook oluşturulmadan ÖNCE yazılır: GitHub'ın hemen gönderdiği ping doğrulanabilsin. */
+    public int updateWebhookSecret(Long id, Long userId, String encryptedSecret) {
+        return jdbcTemplate.update("UPDATE repos SET webhook_secret = ? WHERE id = ? AND user_id = ?",
+                encryptedSecret, id, userId);
+    }
+
+    public int updateWebhookId(Long id, Long userId, long webhookId) {
+        return jdbcTemplate.update(
+                "UPDATE repos SET webhook_id = ?, webhook_created_at = COALESCE(webhook_created_at, NOW()) " +
+                "WHERE id = ? AND user_id = ?", webhookId, id, userId);
+    }
+
+    public int clearWebhook(Long id, Long userId) {
+        return jdbcTemplate.update(
+                "UPDATE repos SET webhook_id = NULL, webhook_secret = NULL, webhook_created_at = NULL, " +
+                "rescan_requested = FALSE WHERE id = ? AND user_id = ?", id, userId);
+    }
+
+    /** Kullanıcının hook'u olan depoları (bağlantı kesme / hesap silme temizliği). */
+    public List<Repo> findWithWebhookByUserId(Long userId) {
+        return jdbcTemplate.query("SELECT * FROM repos WHERE user_id = ? AND webhook_id IS NOT NULL",
+                repoRowMapper, userId);
+    }
+
+    /**
+     * Depo için ÇALIŞAN bir tarama varsa (bekleyen iş zaten en son commit'i tarayacak) bittiğinde yeniden
+     * taranmasını ister.
+     *
+     * @return istek kaydedildiyse true
+     */
+    public boolean requestRescanIfRunning(Long repoId) {
+        return jdbcTemplate.update(
+                "UPDATE repos SET rescan_requested = TRUE WHERE id = ? AND EXISTS " +
+                "(SELECT 1 FROM scan_jobs j WHERE j.repo_id = repos.id AND j.status = 'RUNNING')", repoId) == 1;
+    }
+
+    /** Bekleyen yeniden tarama isteğini atomik olarak tüketir. */
+    public boolean consumeRescanRequest(Long repoId) {
+        return jdbcTemplate.update(
+                "UPDATE repos SET rescan_requested = FALSE WHERE id = ? AND rescan_requested", repoId) == 1;
     }
 }

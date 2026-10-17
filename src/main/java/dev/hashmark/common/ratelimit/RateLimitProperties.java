@@ -26,6 +26,11 @@ public class RateLimitProperties {
     private int contextPerMinute = 60;
     /** {@code /public/**}, IP başına (kimliksiz, önbelleksiz uçlar). */
     private int publicPerMinute = 120;
+    /**
+     * {@code /webhooks/**}, depo adresi başına. GitHub teslimatları paylaşımlı IP'lerden gelir; bu yüzden bu yolda
+     * IP tabanı uygulanmaz, imza doğrulamadan önceki tek uygulama içi sınır budur.
+     */
+    private int webhookPerMinute = 60;
 
     // ---- genel taban (her istek)
     /** Kimlikli her istek, kullanıcı başına. */

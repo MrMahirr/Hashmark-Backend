@@ -132,6 +132,23 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void webhooksAreLimitedPerRepoAddressNotPerIp() throws Exception {
+        dev.hashmark.common.ratelimit.RateLimitProperties p = matrix();
+        p.setWebhookPerMinute(2);
+        RateLimitFilter filter = new RateLimitFilter(p, now::get,
+                new dev.hashmark.common.metrics.AppMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+        assertEquals(200, status(filter, "POST", "/webhooks/github/1", "140.82.112.1"));
+        assertEquals(200, status(filter, "POST", "/webhooks/github/1", "140.82.112.2"));
+        assertEquals(429, status(filter, "POST", "/webhooks/github/1", "140.82.112.3"));
+        // başka deponun teslimatları etkilenmez
+        assertEquals(200, status(filter, "POST", "/webhooks/github/2", "140.82.112.1"));
+        // GitHub'ın tek IP'si birçok deponun teslimatını taşır: IP tabanına (8/dk) takılmamalı
+        for (int repo = 3; repo < 15; repo++) {
+            assertEquals(200, status(filter, "POST", "/webhooks/github/" + repo, "140.82.112.1"), "depo " + repo);
+        }
+    }
+
+    @Test
     void countsRejectionsPerScope() throws Exception {
         io.micrometer.core.instrument.simple.SimpleMeterRegistry registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
         RateLimitFilter filter = new RateLimitFilter(1, 1, now::get, new dev.hashmark.common.metrics.AppMetrics(registry));

@@ -27,6 +27,8 @@ public class ScanJob {
     private Integer filesSkipped;
     private Integer filesFailed;
     private String message;
+    /** MANUAL (kullanıcı) | PUSH (webhook) */
+    private String triggeredBy;
     private LocalDateTime createdAt;
     /** Geçici hatada ertelenen iş bu zamandan önce sahiplenilmez. */
     private LocalDateTime runAfter;

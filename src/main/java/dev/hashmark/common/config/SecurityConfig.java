@@ -79,6 +79,8 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> {
                 auth.requestMatchers("/auth/**", "/public/**").permitAll();
+                // GitHub teslimatları kimliksizdir; GitHubWebhookService her isteği depo anahtarıyla (HMAC) doğrular
+                auth.requestMatchers(org.springframework.http.HttpMethod.POST, "/webhooks/github/*").permitAll();
                 // Ayrı yönetim portundaki actuator istekleri kimliksiz; ana porttaki /actuator/** ise kapalıdır.
                 if (managementPort > 0 && managementPort != serverPort) {
                     auth.requestMatchers(request -> request.getLocalPort() == managementPort

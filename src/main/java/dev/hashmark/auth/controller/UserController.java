@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.webhook.RepoWebhookService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -26,13 +27,15 @@ public class UserController {
 
     private final AuthService authService;
     private final dev.hashmark.consent.ConsentService consentService;
+    private final RepoWebhookService repoWebhookService;
 
     public UserController(UserRepository userRepository, RepoRepository repoRepository, AuthService authService,
-                          dev.hashmark.consent.ConsentService consentService) {
+                          dev.hashmark.consent.ConsentService consentService, RepoWebhookService repoWebhookService) {
         this.userRepository = userRepository;
         this.repoRepository = repoRepository;
         this.authService = authService;
         this.consentService = consentService;
+        this.repoWebhookService = repoWebhookService;
     }
 
     @GetMapping("/me")
@@ -62,6 +65,8 @@ public class UserController {
     public ResponseEntity<Void> disconnectGithub(@AuthenticationPrincipal Long userId,
                                                  @RequestParam(defaultValue = "false") boolean deleteData) {
         userRepository.findById(userId).orElseThrow(() -> ApiException.unauthorized("User not found"));
+        // Token silinmeden önce: GitHub'daki push hook'ları kaldırılır (en iyi çaba)
+        repoWebhookService.removeAllQuietly(userId);
         userRepository.clearGithubToken(userId);
         if (deleteData) {
             repoRepository.deleteAllByUserId(userId);
@@ -73,6 +78,7 @@ public class UserController {
     @Operation(summary = "Hesabi ve tum verileri kalici olarak sil (KVKK/GDPR)")
     public ResponseEntity<Void> deleteAccount(@AuthenticationPrincipal Long userId) {
         userRepository.findById(userId).orElseThrow(() -> ApiException.unauthorized("User not found"));
+        repoWebhookService.removeAllQuietly(userId);
         authService.revokeAllSessions(userId);
         userRepository.deleteById(userId);
         return ResponseEntity.noContent().build();

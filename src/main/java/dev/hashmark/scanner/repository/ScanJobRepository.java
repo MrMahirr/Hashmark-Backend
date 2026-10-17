@@ -49,17 +49,26 @@ public class ScanJobRepository {
             .filesSkipped(rs.getInt("files_skipped"))
             .filesFailed(rs.getInt("files_failed"))
             .message(rs.getString("message"))
+            .triggeredBy(rs.getString("triggered_by"))
             .createdAt(ts(rs.getTimestamp("created_at")))
             .runAfter(ts(rs.getTimestamp("run_after")))
             .deferrals(rs.getInt("deferrals"))
             .claimToken(rs.getObject("claim_token", UUID.class))
             .build();
 
+    public static final String TRIGGER_MANUAL = "MANUAL";
+    public static final String TRIGGER_PUSH = "PUSH";
+
     /** Yeni iş kuyruğa PENDING olarak eklenir. Repo için aktif iş varsa {@code DuplicateKeyException} fırlatır. */
     public ScanJob enqueue(Long repoId, Long userId, String branch) {
-        String sql = "INSERT INTO scan_jobs (repo_id, user_id, branch, status) " +
-                     "VALUES (?, ?, ?, 'PENDING') RETURNING *";
-        return jdbcTemplate.queryForObject(sql, scanJobRowMapper, repoId, userId, branch);
+        return enqueue(repoId, userId, branch, TRIGGER_MANUAL);
+    }
+
+    /** @param triggeredBy {@link #TRIGGER_MANUAL} veya {@link #TRIGGER_PUSH} */
+    public ScanJob enqueue(Long repoId, Long userId, String branch, String triggeredBy) {
+        String sql = "INSERT INTO scan_jobs (repo_id, user_id, branch, status, triggered_by) " +
+                     "VALUES (?, ?, ?, 'PENDING', ?) RETURNING *";
+        return jdbcTemplate.queryForObject(sql, scanJobRowMapper, repoId, userId, branch, triggeredBy);
     }
 
     /** Kuyruk metrikleri ve kuyruk üst sınırı: PENDING sayısı (ertelenenler dahil). */

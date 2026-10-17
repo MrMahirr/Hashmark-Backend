@@ -29,6 +29,7 @@ import java.util.regex.Pattern;
  *   <tr><td>sync</td><td>{@code POST /repos/sync}</td><td>kullanıcı</td></tr>
  *   <tr><td>context</td><td>{@code GET /debts/{id}/context}</td><td>kullanıcı</td></tr>
  *   <tr><td>public</td><td>{@code /public/**}</td><td>IP</td></tr>
+ *   <tr><td>webhook</td><td>{@code /webhooks/**}</td><td>yol (depo); IP tabanı uygulanmaz</td></tr>
  *   <tr><td>user</td><td>kimlikli her istek</td><td>kullanıcı</td></tr>
  *   <tr><td>ip</td><td>her istek</td><td>IP</td></tr>
  * </table>
@@ -73,6 +74,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         p.setSyncPerMinute(0);
         p.setContextPerMinute(0);
         p.setPublicPerMinute(0);
+        p.setWebhookPerMinute(0);
         p.setUserPerMinute(0);
         p.setIpPerMinute(0);
         return p;
@@ -107,6 +109,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
             return;
         }
         if (path.startsWith("/public/") && rejected("public", ip, props.getPublicPerMinute(), response)) {
+            return;
+        }
+        if (path.startsWith("/webhooks/")) {
+            // GitHub'ın paylaşımlı IP'leri tüm depoların teslimatlarını taşır: IP tabanı yerine depo adresi (yol)
+            if (!rejected("webhook", path, props.getWebhookPerMinute(), response)) {
+                chain.doFilter(request, response);
+            }
             return;
         }
         if (userId != null && rejected("user", subject, props.getUserPerMinute(), response)) {

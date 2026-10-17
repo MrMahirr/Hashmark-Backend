@@ -85,5 +85,9 @@ class LoadSheddingFilterTest {
         assertTrue(LoadSheddingFilter.isExpensive(new MockHttpServletRequest("POST", "/report/send-test")));
         assertFalse(LoadSheddingFilter.isExpensive(new MockHttpServletRequest("PATCH", "/debts/1")));
         assertFalse(LoadSheddingFilter.isExpensive(new MockHttpServletRequest("GET", "/debts/1")));
+        assertTrue(LoadSheddingFilter.isExpensive(new MockHttpServletRequest("PUT", "/repos/5/auto-scan")));
+        assertFalse(LoadSheddingFilter.isExpensive(new MockHttpServletRequest("PUT", "/repos/5/branch")));
+        // GitHub teslimatı kaybolmasın: yük altında da kabul edilir
+        assertFalse(LoadSheddingFilter.isExpensive(new MockHttpServletRequest("POST", "/webhooks/github/5")));
     }
 }

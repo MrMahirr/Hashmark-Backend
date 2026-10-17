@@ -30,6 +30,7 @@ import java.util.regex.Pattern;
 public class LoadSheddingFilter extends OncePerRequestFilter {
 
     private static final Pattern CONTEXT_PATH = Pattern.compile("^/debts/[^/]+/context$");
+    private static final Pattern AUTO_SCAN_PATH = Pattern.compile("^/repos/[^/]+/auto-scan$");
 
     private final boolean enabled;
     private final int dbPendingThreshold;
@@ -91,6 +92,11 @@ public class LoadSheddingFilter extends OncePerRequestFilter {
         }
         if ("GET".equalsIgnoreCase(method)) {
             return "/debts/export".equals(path) || CONTEXT_PATH.matcher(path).matches();
+        }
+        if ("PUT".equalsIgnoreCase(method)) {
+            // GitHub'a hook kurar/kaldırır. Webhook teslimatları (POST /webhooks/**) bilerek atılmaz: GitHub
+            // başarısız teslimatı kendiliğinden yeniden göndermez ve teslimat ucuzdur (tek okuma + tek ekleme).
+            return AUTO_SCAN_PATH.matcher(path).matches();
         }
         return false;
     }

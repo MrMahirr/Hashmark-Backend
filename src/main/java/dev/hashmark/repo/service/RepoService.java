@@ -129,6 +129,7 @@ public class RepoService {
                 .trackedBranch(repo.getTrackedBranch())
                 .lastScannedSha(repo.getLastScannedSha())
                 .tracked(repo.getTracked())
+                .autoScan(repo.getWebhookId() != null)
                 .debtBreakdown(repo.getDebtBreakdown())
                 .build();
     }
