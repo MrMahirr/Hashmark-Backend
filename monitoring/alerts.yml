@@ -105,6 +105,34 @@ groups:
           summary: "Hız sınırı sürekli 429 üretiyor"
           description: "Saldırı, hatalı istemci veya sınırların fazla düşük olması olabilir."
 
+  - name: hashmark-database
+    rules:
+      - alert: DbTimeouts
+        expr: sum by (kind) (increase(hashmark_db_timeout_total{job="backend"}[10m])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "DB zaman aşımları artıyor ({{ $labels.kind }})"
+          description: "Son 10 dakikada {{ $value | humanize }} istek DB zaman aşımıyla 503 aldı. statement: yavaş sorgu (scripts/pg-top-queries.sh); lock: uzun kilit tutan migrasyon/oturum (pg_stat_activity)."
+
+      - alert: DbAutovacuumLagging
+        expr: |
+          hashmark_db_table_dead_rows{job="backend"} > 10000
+            and hashmark_db_table_dead_rows{job="backend"}
+              / (hashmark_db_table_live_rows{job="backend"} + hashmark_db_table_dead_rows{job="backend"}) > 0.2
+        for: 6h
+        labels: { severity: warning }
+        annotations:
+          summary: "Otomatik vakum geride: {{ $labels.table }}"
+          description: "6 saattir ölü satır oranı %20'nin üstünde. Uzun açık transaction (idle in transaction) vakumu engelliyor olabilir; docs/POSTGRES_TUNING.md → 'Vakum geride'."
+
+      - alert: WalArchivingFailing
+        expr: hashmark_db_wal_archive_failing{job="backend"} == 1
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "WAL arşivlenemiyor (PITR)"
+          description: "15 dakikadır son arşiv denemesi başarısız. Depo/anahtar erişimi ya da stanza: docker logs hashmark_postgres | grep archive-push. WAL 2 GiB birikince atılır ve PITR boşluğu oluşur (docs/PITR.md)."
+
   - name: hashmark-host
     rules:
       - alert: DiskUsageHigh
@@ -140,3 +168,27 @@ groups:
         annotations:
           summary: "Yedek metriği hiç yok"
           description: "backup-db.sh metrik dosyasını (backups/metrics/hashmark_backup.prom) yazmıyor veya node-exporter okumuyor."
+
+      - alert: PitrBackupFailed
+        expr: hashmark_pitr_backup_last_run_success == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Son PITR temel yedeği başarısız"
+          description: "pitr-backup.sh hata ile bitti; backups/pitr.log'a bakın (docs/PITR.md)."
+
+      - alert: PitrBackupStale
+        expr: time() - hashmark_pitr_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "26 saattir başarılı PITR temel yedeği yok"
+          description: "Cron çalışmıyor olabilir. Temel yedek eskidikçe geri yükleme daha çok WAL oynatır ve uzar."
+
+      - alert: RestoreDrillOverdue
+        expr: time() - hashmark_restore_drill_last_success_timestamp_seconds > 100 * 86400
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Geri yükleme tatbikatı gecikti (>100 gün)"
+          description: "Üç ayda bir tatbikat şartı (plan Faz 2): ./scripts/pitr-restore-test.sh çalıştırın, sonucu Hashmark-Vault'a yazın."

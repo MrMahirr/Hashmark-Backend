@@ -304,7 +304,10 @@ docker compose up -d --build
 
 ## 14. Database Migration
 
-Flyway migration'ları backend başladığında **otomatik** çalışır.
+Flyway migration'ları backend başladığında **otomatik** çalışır. Yeni migrasyon yazmadan önce
+kurallar (expand → migrate → contract, `CONCURRENTLY`, kilit zaman aşımı, geri alma): `docs/MIGRATIONS.md`.
+Postgres ayarları ve vakum izleme: `docs/POSTGRES_TUNING.md`. Satır güvenliğini (RLS) etkinleştirme —
+ayrı uygulama rolü: `docs/ROW_LEVEL_SECURITY.md`. Anahtar dönüşü: `docs/KEY_ROTATION.md`.
 
 ```bash
 # Migration durumunu kontrol et
@@ -334,6 +337,10 @@ gunzip < backups/hashmark_backup_YYYYMMDD_HHMMSS.sql.gz | \
 ```
 
 ---
+
+### PITR (belirli bir ana geri dönme)
+Gece `pg_dump`'ına ek olarak WAL sürekli, şifreli ve sunucu dışı bir S3 deposuna arşivlenir (RPO ≈ 5 dk,
+14 gün pencere). Kurulum, cron, olay anında geri yükleme ve tatbikat: `docs/PITR.md`.
 
 ### Yedeği doğrulama
 ```bash
@@ -377,9 +384,8 @@ docker compose up -d --build backend
 yedek 16'ya elle yüklenir (pg_dump 18 çıktısındaki yeni `SET` satırları silinmeden hata verebilir).
 Birkaç hafta sorunsuz çalıştıktan sonra eski volume silinebilir: `docker volume rm <proje>_postgres_data`.
 
-**Bilinen uyarı:** Spring Boot 3.3.0 ile gelen Flyway 10.10.0 açılışta *"PostgreSQL 18 is newer than this
-version of Flyway"* uyarısı verir. Migrasyonlar çalışır (176 test PG 18.1'de yeşil); resmi destek Spring Boot
-yükseltmesiyle gelecek Flyway sürümündedir.
+**Not:** Spring Boot 3.3.0 döneminde Flyway 10.10.0 *"PostgreSQL 18 is newer than this version of Flyway"*
+uyarısı veriyordu; Boot 4.1 yükseltmesiyle gelen Flyway sürümünde bu uyarı yoktur.
 
 ## 15b. İzleme ve alarm
 Prometheus/Alertmanager yığını `monitoring/` altındadır; kurulum ve alarm listesi: `monitoring/README.md`.

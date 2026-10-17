@@ -5,6 +5,7 @@ import dev.hashmark.auth.model.User;
 import dev.hashmark.auth.repository.UserRepository;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.common.util.AesEncryptionUtil;
+import dev.hashmark.consent.ConsentService;
 import dev.hashmark.common.util.FingerprintUtil;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.dto.ReplaceResult;
@@ -45,14 +46,16 @@ public class ScanJobProcessor {
     private final AesEncryptionUtil aesEncryptionUtil;
     private final NotificationService notificationService;
     private final AppMetrics metrics;
+    private final ConsentService consentService;
 
     public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanResultWriter scanResultWriter,
                             GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
                             DebtParserService debtParserService,
                             UserRepository userRepository, RepoRepository repoRepository,
                             AesEncryptionUtil aesEncryptionUtil, NotificationService notificationService,
-                            AppMetrics metrics) {
+                            AppMetrics metrics, ConsentService consentService) {
         this.metrics = metrics;
+        this.consentService = consentService;
         this.scanJobRepository = scanJobRepository;
         this.scanResultWriter = scanResultWriter;
         this.gitHubFileService = gitHubFileService;
@@ -90,6 +93,9 @@ public class ScanJobProcessor {
             }
             String plainToken = aesEncryptionUtil.decrypt(user.getGithubToken());
             Repo repo = repoRepository.findByIdAndUserId(repoId, userId).orElseThrow(() -> ApiException.notFound("Repo not found"));
+            // Kuyruktaki iş onay geri çekildikten sonra da çalışmaz; özel depo ek onayı da işçide yeniden denetlenir
+            consentService.requireForProcessing(userId);
+            consentService.requirePrivateRepoAck(repo);
 
             List<Debt> allDebts = new ArrayList<>();
 

@@ -1,5 +1,6 @@
 package dev.hashmark.common.metrics;
 
+import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -34,7 +35,8 @@ public class ScanQueueMetrics implements MeterBinder {
 
     private static double safe(Supplier<Double> reader) {
         try {
-            return reader.get();
+            // Kuyruk derinliği tüm kullanıcıların işlerini sayar (RLS, V11)
+            return TenantContext.asSystem(reader);
         } catch (Exception e) {
             log.warn("Kuyruk metriği okunamadı: {}", e.getClass().getSimpleName());
             return Double.NaN;

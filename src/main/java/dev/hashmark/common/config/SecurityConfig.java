@@ -36,10 +36,13 @@ public class SecurityConfig {
     private int scanPerMinute;
 
     private final AppMetrics metrics;
+    private final dev.hashmark.consent.ConsentService consentService;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, AppMetrics metrics) {
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, AppMetrics metrics,
+                          dev.hashmark.consent.ConsentService consentService) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.metrics = metrics;
+        this.consentService = consentService;
     }
 
     @Bean
@@ -81,7 +84,9 @@ public class SecurityConfig {
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             // JWT filtresinden sonra: kullanıcı kimliği biliniyorsa kullanıcı bazlı sınırlar uygulanır.
-            .addFilterAfter(new RateLimitFilter(authPerMinute, scanPerMinute, metrics), JwtAuthenticationFilter.class);
+            .addFilterAfter(new RateLimitFilter(authPerMinute, scanPerMinute, metrics), JwtAuthenticationFilter.class)
+            // Onay kapısı (plan 5.10): kimlik bilindikten sonra, controller'lardan önce
+            .addFilterAfter(new dev.hashmark.consent.ConsentGateFilter(consentService), RateLimitFilter.class);
 
         return http.build();
     }

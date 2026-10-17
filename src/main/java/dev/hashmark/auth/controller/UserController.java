@@ -25,11 +25,14 @@ public class UserController {
     private final RepoRepository repoRepository;
 
     private final AuthService authService;
+    private final dev.hashmark.consent.ConsentService consentService;
 
-    public UserController(UserRepository userRepository, RepoRepository repoRepository, AuthService authService) {
+    public UserController(UserRepository userRepository, RepoRepository repoRepository, AuthService authService,
+                          dev.hashmark.consent.ConsentService consentService) {
         this.userRepository = userRepository;
         this.repoRepository = repoRepository;
         this.authService = authService;
+        this.consentService = consentService;
     }
 
     @GetMapping("/me")
@@ -38,7 +41,11 @@ public class UserController {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.unauthorized("User not found"));
 
+        var consent = consentService.status(userId);
         UserProfileDto dto = UserProfileDto.builder()
+                .consentRequired(consent.required())
+                .consentVersion(consent.acceptedVersion())
+                .consentAcceptedAt(consent.acceptedAt())
                 .name(user.getName())
                 .email(user.getEmail())
                 .githubLogin(user.getGithubLogin())

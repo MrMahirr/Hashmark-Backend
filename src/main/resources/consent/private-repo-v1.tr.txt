@@ -1,0 +1,1 @@
+Bu depo özel. Hashmark bu depodan yalnızca dosya yollarını ve işaretli yorum satırlarını (commit yazarıyla birlikte) saklar; kaynak kod saklanmaz. Yorum satırları özel bilgi içerebilir; taramaya devam etmeden önce bunu kabul ettiğinizi onaylayın.

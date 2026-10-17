@@ -45,8 +45,12 @@ jobs:
       - run: bash scripts/check-monitoring.sh
 
   docker-build:
-    name: Docker imajı derlenir
+    name: Docker imajları derlenir
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t hashmark-backend:ci .
+      # PITR: postgres + pgBackRest (docs/PITR.md). Uçtan uca test (scripts/pitr-e2e-test.sh) MinIO imajı
+      # gerektirdiği için yerelde koşulur.
+      - run: docker build -t hashmark-postgres:ci postgres
+      - run: docker run --rm --entrypoint pgbackrest hashmark-postgres:ci version

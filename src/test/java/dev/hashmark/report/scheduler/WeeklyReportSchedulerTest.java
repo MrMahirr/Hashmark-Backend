@@ -21,7 +21,8 @@ class WeeklyReportSchedulerTest {
 
     private final EmailService email = mock(EmailService.class);
     private final UserSettingsRepository settings = mock(UserSettingsRepository.class);
-    private final WeeklyReportScheduler scheduler = new WeeklyReportScheduler(email, settings, "Europe/Istanbul");
+    private final WeeklyReportScheduler scheduler = new WeeklyReportScheduler(email, settings,
+            mock(dev.hashmark.consent.ConsentService.class), "Europe/Istanbul");
     private final LocalDate friday = LocalDate.of(2026, 10, 16);
 
     private DigestRecipient recipient(long id) {

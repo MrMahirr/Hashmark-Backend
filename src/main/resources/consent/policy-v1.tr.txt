@@ -1,0 +1,36 @@
+## Aldığımız veriler
+- GitHub profiliniz: kullanıcı adı, e-posta adresi, ad ve profil resmi.
+- Takibe aldığınız depoların adları ve seçtiğiniz dal.
+- Taranan dosyaların yolları (ör. src/app/main.ts).
+- TODO, FIXME, HACK, XXX, NOTE gibi işaretli yorum satırları (en fazla 500 karakter) ve satır numaraları.
+- Yorum satırının commit yazarı: GitHub kullanıcı adı ve adı.
+
+## Almadığımız veriler
+- Kaynak kodun kendisi, dosya içerikleri ve depo kopyası saklanmaz. Depo arşivi yalnızca tarama sırasında bellekte işlenir, diske yazılmaz.
+- Bir yorumun çevresindeki kod satırları yalnızca siz istediğinizde GitHub'dan anlık getirilir ve saklanmaz.
+
+## Nasıl korunur
+- GitHub erişim jetonunuz şifreli saklanır.
+- Verilerinize yalnızca siz erişirsiniz; diğer kullanıcıların verisiyle karışmaz.
+- Yorum satırları ve commit yazarı adı bugün veritabanında şifrelenmeden saklanır; erişimi kısıtlı sunucularda tutulur. Bu alanların şifrelenmesi planlanmıştır; geldiğinde bu metin güncellenir ve onayınız yeniden istenir.
+- Yorum metinleri ve erişim jetonu uygulama loglarına yazılmaz.
+
+## Neden
+- Kodunuzdaki teknik borcu takip etmek, raporlamak ve (açarsanız) haftalık özet e-postası göndermek.
+
+## Saklama
+- Borç kayıtları: hesabınız ve depo takibi sürdükçe.
+- Tarama geçmişi 90 gün; trend özetleri 24 ay; okunmuş bildirimler 180 gün.
+- Yedekler: en fazla 30 gün. Sildiğiniz veri bu süre dolunca yedeklerden de çıkar.
+
+## Üçüncü taraflar
+- GitHub: verilerin kaynağı.
+- Brevo: yalnızca haftalık özet açıksa; e-posta adresiniz ve özet içeriği.
+
+## Haklarınız
+- Onayınızı istediğiniz an Ayarlar → Gizlilik ve veriler bölümünden geri çekebilirsiniz; tarama ve özetler durur.
+- Hesabınızı ve tüm verilerinizi kalıcı olarak silebilirsiniz.
+- Borç kayıtlarınızı dışa aktararak dökümünü alabilirsiniz.
+
+## Özel depolar
+- Özel bir depoyu ilk kez taramadan önce ayrıca onayınız istenir.

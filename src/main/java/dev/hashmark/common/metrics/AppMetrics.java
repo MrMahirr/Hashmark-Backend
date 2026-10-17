@@ -62,6 +62,24 @@ public class AppMetrics {
                 .increment(rows);
     }
 
+    /** kind: "statement" (statement_timeout) veya "lock" (lock_timeout / kilit alınamadı). */
+    public void dbTimeout(String kind) {
+        Counter.builder("hashmark.db.timeout")
+                .description("DB zaman aşımı nedeniyle 503 dönen istekler")
+                .tag("kind", kind)
+                .register(registry)
+                .increment();
+    }
+
+    /** Anahtar dönüşü: result "ok" (yeniden şifrelendi) veya "failed" (çözülemedi). */
+    public void reencrypted(String result, int count) {
+        Counter.builder("hashmark.crypto.reencrypted")
+                .description("Geçerli anahtarla yeniden şifrelenen değerler")
+                .tag("result", result)
+                .register(registry)
+                .increment(count);
+    }
+
     public void githubRateLimitRemaining(long remaining) {
         githubRateLimitRemaining.set(remaining);
     }

@@ -1,5 +1,6 @@
 package dev.hashmark.scanner.job;
 
+import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.scanner.config.ScanProperties;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
@@ -40,6 +41,11 @@ public class ScanJobDispatcher {
     @Scheduled(fixedDelayString = "${scan.dispatch-interval-ms:2000}",
                initialDelayString = "${scan.dispatch-interval-ms:2000}")
     public void tick() {
+        // Kuyruk kullanıcılar arasıdır: kurtarma/sahiplenme/geri bırakma sistem kapsamında (RLS, V11)
+        TenantContext.asSystem(this::dispatch);
+    }
+
+    private void dispatch() {
         try {
             int recovered = scanJobRepository.recoverStale(
                     properties.getHeartbeatTimeoutMinutes(), properties.getMaxAttempts());
@@ -68,7 +74,13 @@ public class ScanJobDispatcher {
         try {
             executor.execute(() -> {
                 try {
-                    processor.process(job);
+                    // İş, sahibinin kapsamında işlenir: başka kullanıcının satırına yazamaz (WITH CHECK).
+                    // Sahibi olmayan eski iş yalnızca FAILED işaretlenebilsin diye sistem kapsamında kalır.
+                    if (job.getUserId() != null) {
+                        TenantContext.asUser(job.getUserId(), () -> processor.process(job));
+                    } else {
+                        TenantContext.asSystem(() -> processor.process(job));
+                    }
                 } catch (Exception e) {
                     log.error("Unhandled error while processing scan job {}", job.getId(), e);
                 } finally {

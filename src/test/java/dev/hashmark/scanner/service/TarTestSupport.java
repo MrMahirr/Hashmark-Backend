@@ -6,11 +6,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.zip.GZIPOutputStream;
 
 /** Testler için bellek içi tar / tar.gz üretici (ustar, PAX, GNU uzun ad). */
-final class TarTestSupport {
+public final class TarTestSupport {
 
     private final ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-    TarTestSupport file(String path, String content) {
+    public TarTestSupport file(String path, String content) {
         return file(path, content.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -37,7 +37,7 @@ final class TarTestSupport {
         return this;
     }
 
-    TarTestSupport globalHeader() {
+    public TarTestSupport globalHeader() {
         writeEntry("pax_global_header", 'g', "52 comment=0123456789abcdef0123456789abcdef01234567\n".getBytes(StandardCharsets.UTF_8));
         return this;
     }
@@ -92,7 +92,7 @@ final class TarTestSupport {
         return copy.toByteArray();
     }
 
-    byte[] tarGz() {
+    public byte[] tarGz() {
         try {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             try (GZIPOutputStream gz = new GZIPOutputStream(bos)) {
