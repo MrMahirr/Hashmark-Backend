@@ -1,6 +1,7 @@
 package dev.hashmark.scanner.service;
 
 import dev.hashmark.debt.dto.DebtDto;
+import dev.hashmark.scanner.config.RepoScanConfig;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -323,5 +324,70 @@ class DebtParserServiceTest {
 
         assertEquals(1, debts.size());
         assertEquals("INFO", debts.get(0).getLabel());
+    }
+
+    private static LabelRules rules(String yaml) {
+        return LabelRules.of(RepoScanConfig.parse(yaml));
+    }
+
+    @Test
+    void recognizesCustomLabelsAsDebtWithMetadata() {
+        LabelRules rules = rules("labels:\n  custom: [SECURITY, optimize]\n");
+        String input = """
+                // SECURITY(mahir, P1): validate redirect target
+                // OPTIMIZE: cache this #42
+                a();
+                // security review happens later
+                b();
+                // Optimize nothing here
+                """;
+
+        List<DebtDto> debts = parser.parse(input, "A.java", rules);
+
+        assertEquals(4, debts.size());
+        assertDebt(debts.get(0), 1, "SECURITY", "validate redirect target");
+        assertEquals("mahir", debts.get(0).getAssignee());
+        assertEquals("HIGH", debts.get(0).getPriority());
+        assertDebt(debts.get(1), 2, "OPTIMIZE", "cache this #42");
+        assertEquals("#42", debts.get(1).getIssueRef());
+        // küçük harfli, iki nokta/etiket içermeyen cümle etiket sayılmaz
+        assertEquals("NOTE", debts.get(2).getLabel());
+        assertEquals("NOTE", debts.get(3).getLabel());
+    }
+
+    @Test
+    void customLabelsAreUnknownWithoutConfig() {
+        List<DebtDto> debts = parser.parse("// SECURITY: check\n", "A.java");
+
+        assertEquals("NOTE", debts.get(0).getLabel());
+    }
+
+    @Test
+    void disabledLabelsAreNotRecorded() {
+        LabelRules rules = rules("labels:\n  disable: [NOTE, doc, XXX]\n");
+        String input = """
+                /** Javadoc */
+                // just a note
+                // XXX: odd
+                // TODO: keep
+                a();
+                // config url here
+                """;
+
+        List<DebtDto> debts = parser.parse(input, "A.java", rules);
+
+        assertEquals(2, debts.size());
+        assertDebt(debts.get(0), 4, "TODO", "keep");
+        assertEquals("INFO", debts.get(1).getLabel());
+    }
+
+    @Test
+    void customDebtLabelWinsLineOverPlainComment() {
+        LabelRules rules = rules("labels:\n  custom: [PERF]\n");
+
+        List<DebtDto> debts = parser.parse("x(); /* note */ // PERF: n^2 loop\n", "a.ts", rules);
+
+        assertEquals(1, debts.size());
+        assertDebt(debts.get(0), 1, "PERF", "n^2 loop");
     }
 }

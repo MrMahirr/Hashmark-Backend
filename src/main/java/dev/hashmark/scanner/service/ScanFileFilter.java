@@ -17,7 +17,8 @@ import java.util.regex.Pattern;
  *   <li>{@code *.ext}, {@code dosya.js} — herhangi bir derinlikte dosya adı eşleşmesi</li>
  *   <li>{@code src/gen/**} veya {@code /docs} — kökten itibaren yol eşleşmesi ({@code *}, {@code **}, {@code ?})</li>
  * </ul>
- * Negasyon ({@code !}) desteklenmez.
+ * Negasyon ({@code !}) desteklenmez. {@code .hashmark.yml} içindeki {@code include}/{@code exclude} listeleri
+ * de aynı sözdizimini kullanır.
  */
 public final class ScanFileFilter {
 
@@ -34,10 +35,23 @@ public final class ScanFileFilter {
 
     private final Set<String> excludedDirs;
     private final List<IgnoreRule> ignoreRules;
+    /** Boşsa her yol dahildir; değilse yol en az bir kurala uymalı ({@code .hashmark.yml} include). */
+    private final List<IgnoreRule> includeRules;
 
     public ScanFileFilter(Set<String> excludedDirs, String ignoreFileContent) {
+        this(excludedDirs, ignoreFileContent, List.of(), List.of());
+    }
+
+    /**
+     * @param includePatterns {@code .hashmark.yml} include (aynı sözdizimi)
+     * @param excludePatterns {@code .hashmark.yml} exclude; {@code .hashmarkignore} kurallarına eklenir
+     */
+    public ScanFileFilter(Set<String> excludedDirs, String ignoreFileContent, List<String> includePatterns,
+                          List<String> excludePatterns) {
         this.excludedDirs = excludedDirs;
-        this.ignoreRules = parseIgnoreRules(ignoreFileContent);
+        this.ignoreRules = new ArrayList<>(parseIgnoreRules(ignoreFileContent));
+        this.ignoreRules.addAll(parseIgnoreRules(String.join("\n", excludePatterns)));
+        this.includeRules = parseIgnoreRules(String.join("\n", includePatterns));
     }
 
     public boolean hasSupportedExtension(String path) {
@@ -70,7 +84,15 @@ public final class ScanFileFilter {
                 return false;
             }
         }
-        return true;
+        if (includeRules.isEmpty()) {
+            return true;
+        }
+        for (IgnoreRule rule : includeRules) {
+            if (rule.matches(path, segments)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------

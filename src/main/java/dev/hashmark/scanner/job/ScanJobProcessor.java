@@ -13,12 +13,14 @@ import dev.hashmark.debt.model.Debt;
 import dev.hashmark.notification.service.NotificationService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.scanner.config.RepoScanConfig;
 import dev.hashmark.scanner.config.ScanProperties;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.service.BlameEnrichmentService;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
+import dev.hashmark.scanner.service.LabelRules;
 import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +40,7 @@ import java.util.concurrent.ThreadLocalRandom;
 public class ScanJobProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ScanJobProcessor.class);
+    private static final int MAX_CONFIG_WARNINGS = 3;
 
     private final ScanJobRepository scanJobRepository;
     private final ScanResultWriter scanResultWriter;
@@ -105,16 +108,19 @@ public class ScanJobProcessor {
 
             List<Debt> allDebts = new ArrayList<>();
 
+            RepoScanConfig config = gitHubFileService.fetchRepoConfig(repo.getFullName(), plainToken, job.getBranch());
+            LabelRules rules = LabelRules.of(config);
             ScanResult result = gitHubFileService.scanRepository(
                     repo.getFullName(),
                     plainToken,
                     job.getBranch(),
-                    (path, content) -> allDebts.addAll(toDebts(repoId, path, content)),
+                    config,
+                    (path, content) -> allDebts.addAll(toDebts(repoId, path, content, rules)),
                     processed -> scanJobRepository.updateProgress(jobId, token, processed));
 
             // İş kapatma + borçlar + repo damgaları + snapshot tek transaction'da yazılır
             Optional<ReplaceResult> replaced = scanResultWriter.write(jobId, token, repoId, allDebts, result,
-                    buildMessage(result));
+                    buildMessage(result, config));
             if (replaced.isEmpty()) {
                 log.warn("Scan job {} is no longer running; result discarded", jobId);
                 return false;
@@ -188,10 +194,10 @@ public class ScanJobProcessor {
     }
 
     /** Dosyadaki yorumları ayrıştırır; aynı (etiket+içerik) tekrarlarına sıra numarası verir. */
-    List<Debt> toDebts(Long repoId, String path, String content) {
+    List<Debt> toDebts(Long repoId, String path, String content, LabelRules rules) {
         List<Debt> debts = new ArrayList<>();
         Map<String, Integer> seen = new HashMap<>();
-        for (DebtDto dto : debtParserService.parse(content, path)) {
+        for (DebtDto dto : debtParserService.parse(content, path, rules)) {
             String fingerprint = FingerprintUtil.fingerprint(dto.getLabel(), dto.getContent());
             int occurrence = seen.merge(fingerprint, 1, Integer::sum) - 1;
             debts.add(Debt.builder()
@@ -222,13 +228,19 @@ public class ScanJobProcessor {
         }
     }
 
-    private String buildMessage(ScanResult result) {
+    static String buildMessage(ScanResult result, RepoScanConfig config) {
         List<String> parts = new ArrayList<>();
         if (result.truncated()) {
             parts.add("Partial scan: " + result.truncationReason());
         }
         if (result.failed() > 0) {
             parts.add(result.failed() + " file(s) could not be processed");
+        }
+        List<String> warnings = config.warnings();
+        if (!warnings.isEmpty()) {
+            List<String> shown = warnings.subList(0, Math.min(MAX_CONFIG_WARNINGS, warnings.size()));
+            String more = warnings.size() > shown.size() ? " (+" + (warnings.size() - shown.size()) + " more)" : "";
+            parts.add(RepoScanConfig.FILE_NAME + ": " + String.join(", ", shown) + more);
         }
         return parts.isEmpty() ? null : String.join("; ", parts);
     }

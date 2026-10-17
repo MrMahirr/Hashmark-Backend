@@ -2,6 +2,7 @@ package dev.hashmark.scanner.service;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -88,6 +89,28 @@ class ScanFileFilterTest {
         assertTrue(f.shouldScan("src/other/C.java"));
         assertFalse(f.shouldScan("src/mod/tmp_1.java"));
         assertTrue(f.shouldScan("src/mod/tmp_12.java"));
+    }
+
+    @Test
+    void configIncludeLimitsScanAndExcludeAddsToIgnoreFile() {
+        ScanFileFilter f = new ScanFileFilter(DIRS, "legacy.py\n",
+                List.of("/src", "scripts/*.sh"), List.of("*.gen.ts", "src/vendored/"));
+
+        assertTrue(f.shouldScan("src/app.ts"));
+        assertTrue(f.shouldScan("scripts/run.sh"));
+        assertFalse(f.shouldScan("lib/app.ts"), "include dışı");
+        assertFalse(f.shouldScan("tools/src/app.ts"), "/src yalnızca kökteki src");
+        assertFalse(f.shouldScan("src/api.gen.ts"), "config exclude");
+        assertFalse(f.shouldScan("src/vendored/x.ts"), "config exclude dizin");
+        assertFalse(f.shouldScan("src/legacy.py"), ".hashmarkignore hâlâ geçerli");
+        assertFalse(f.shouldScan("src/node_modules/x.js"), "yerleşik hariç dizinler include'u yener");
+    }
+
+    @Test
+    void emptyIncludeMeansEverything() {
+        ScanFileFilter f = new ScanFileFilter(DIRS, null, List.of(), List.of());
+
+        assertTrue(f.shouldScan("any/where/app.go"));
     }
 
     @Test

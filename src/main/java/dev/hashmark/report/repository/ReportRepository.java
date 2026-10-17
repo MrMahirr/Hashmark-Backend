@@ -185,6 +185,7 @@ public class ReportRepository {
                 case "NOTE": stats.setNoteCount(count); break;
                 case "DOC": stats.setDocCount(count); break;
                 case "INFO": stats.setInfoCount(count); break;
+                default: stats.getCustomCounts().put(label.toUpperCase(), count); break;
             }
         }, params.toArray());
         

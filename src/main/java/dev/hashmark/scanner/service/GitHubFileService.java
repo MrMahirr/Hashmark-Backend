@@ -2,6 +2,8 @@ package dev.hashmark.scanner.service;
 
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.common.util.LogSafe;
+import dev.hashmark.scanner.config.RepoScanConfig;
+import dev.hashmark.scanner.config.RepoScanConfig;
 import dev.hashmark.scanner.config.ScanProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +32,8 @@ import static dev.hashmark.scanner.service.GitHubHttpClient.closeQuietly;
  *
  * <p>Eski yaklaşım (ağaç + dosya başına {@code /contents} isteği) 5000 istek/saat limitine hızla
  * çarpıyordu; ağaç yanıtı büyük depolarda kesiliyor ve 1 MB üstü dosyalar boş dönüyordu.
+ * Taramadan önce kök dizindeki {@code .hashmark.yml} ve {@code .hashmarkignore} birer istekle okunur.
+ * Taramadan önce kök dizindeki {@code .hashmark.yml} ve {@code .hashmarkignore} ayrı birer istekle okunur.
  * HTTP ayrıntıları (rate-limit, yeniden deneme) {@link GitHubHttpClient} içindedir.
  */
 @Service
@@ -43,6 +47,7 @@ public class GitHubFileService {
     private static final long HEARTBEAT_MILLIS = 20_000L;
     private static final int BINARY_SNIFF_BYTES = 8000;
     private static final int MAX_IGNORE_FILE_BYTES = 64 * 1024;
+    private static final int MAX_CONFIG_FILE_BYTES = 64 * 1024;
 
     private final ScanProperties properties;
     private final GitHubHttpClient http;
@@ -76,22 +81,40 @@ public class GitHubFileService {
     }
 
     /**
-     * @param branch {@code null} ise deponun varsayılan dalı taranır
-     * @param progress her {@value #PROGRESS_EVERY} dosyada ve en az 20 sn'de bir çağrılır (kalp atışı)
+     * İlgili daldaki {@code .hashmark.yml} (1 istek). Dosya yoksa varsayılan; hatalıysa varsayılan + uyarı.
+     *
+     * @param branch {@code null} ise deponun varsayılan dalı
      */
+    public RepoScanConfig fetchRepoConfig(String repoFullName, String githubToken, String branch) {
+        String ref = validatedRef(repoFullName, branch);
+        String content = fetchRootFile(repoFullName, githubToken, ref, RepoScanConfig.FILE_NAME,
+                MAX_CONFIG_FILE_BYTES + 1);
+        if (content != null && content.getBytes(StandardCharsets.UTF_8).length > MAX_CONFIG_FILE_BYTES) {
+            return RepoScanConfig.invalid(RepoScanConfig.FILE_NAME + " is larger than 64 KB");
+        }
+        return RepoScanConfig.parse(content);
+    }
+
+    /** {@code .hashmark.yml} olmadan tarar (varsayılan yapılandırma). */
     public ScanResult scanRepository(String repoFullName, String githubToken, String branch,
                                      FileHandler handler, IntConsumer progress) {
-        if (repoFullName == null || !REPO_FULL_NAME.matcher(repoFullName).matches()) {
-            throw ApiException.badRequest("Invalid repository name");
-        }
-        if (branch != null && !branch.isBlank() && !isValidBranch(branch)) {
-            throw ApiException.badRequest("Invalid branch name");
-        }
-        String ref = (branch == null || branch.isBlank()) ? null : branch;
+        return scanRepository(repoFullName, githubToken, branch, RepoScanConfig.DEFAULT, handler, progress);
+    }
+
+    /**
+     * @param branch {@code null} ise deponun varsayılan dalı taranır
+     * @param config {@link #fetchRepoConfig} sonucu (include/exclude burada uygulanır)
+     * @param progress her {@value #PROGRESS_EVERY} dosyada ve en az 20 sn'de bir çağrılır (kalp atışı)
+     */
+    public ScanResult scanRepository(String repoFullName, String githubToken, String branch, RepoScanConfig config,
+                                     FileHandler handler, IntConsumer progress) {
+        String ref = validatedRef(repoFullName, branch);
 
         Instant deadline = Instant.now().plusSeconds(properties.getMaxDurationSeconds());
         ScanFileFilter filter = new ScanFileFilter(
-                Set.copyOf(properties.getExcludedDirs()), fetchIgnoreFile(repoFullName, githubToken, ref));
+                Set.copyOf(properties.getExcludedDirs()),
+                fetchRootFile(repoFullName, githubToken, ref, ".hashmarkignore", MAX_IGNORE_FILE_BYTES),
+                config.include(), config.exclude());
 
         Set<String> scannedPaths = new HashSet<>();
         Set<String> keepOpen = new HashSet<>();
@@ -176,9 +199,20 @@ public class GitHubFileService {
     // GitHub istekleri
     // ------------------------------------------------------------------
 
-    /** İlgili daldaki {@code .hashmarkignore}; yoksa veya okunamazsa {@code null}. */
-    private String fetchIgnoreFile(String repoFullName, String token, String ref) {
-        String url = http.apiUrl() + "/repos/" + repoFullName + "/contents/.hashmarkignore"
+    /** Depo adını ve dalı doğrular; varsayılan dal için {@code null} döner. */
+    private static String validatedRef(String repoFullName, String branch) {
+        if (repoFullName == null || !REPO_FULL_NAME.matcher(repoFullName).matches()) {
+            throw ApiException.badRequest("Invalid repository name");
+        }
+        if (branch != null && !branch.isBlank() && !isValidBranch(branch)) {
+            throw ApiException.badRequest("Invalid branch name");
+        }
+        return (branch == null || branch.isBlank()) ? null : branch;
+    }
+
+    /** İlgili daldaki kök dosya ({@code .hashmarkignore}, {@code .hashmark.yml}); yoksa veya okunamazsa {@code null}. */
+    private String fetchRootFile(String repoFullName, String token, String ref, String fileName, int maxBytes) {
+        String url = http.apiUrl() + "/repos/" + repoFullName + "/contents/" + fileName
                 + (ref == null ? "" : "?ref=" + URLEncoder.encode(ref, StandardCharsets.UTF_8));
         HttpRequest request = http.request(URI.create(url), token)
                 .header("Accept", "application/vnd.github.raw+json")
@@ -187,14 +221,14 @@ public class GitHubFileService {
         HttpResponse<InputStream> response = http.send(request);
         try (InputStream body = response.body()) {
             if (response.statusCode() == 200) {
-                return new String(body.readNBytes(MAX_IGNORE_FILE_BYTES), StandardCharsets.UTF_8);
+                return new String(body.readNBytes(maxBytes), StandardCharsets.UTF_8);
             }
             if (response.statusCode() == 401) {
                 throw ApiException.unauthorized("GitHub token is invalid or revoked, please sign in again");
             }
             return null; // 404 ve diğerleri: kural dosyası yok sayılır
         } catch (IOException e) {
-            log.warn("Could not read .hashmarkignore of {}", repoFullName, e);
+            log.warn("Could not read {} of {}", fileName, repoFullName, e);
             return null;
         }
     }

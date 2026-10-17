@@ -124,11 +124,8 @@ public class DebtExportService {
         driver.put("name", "Hashmark");
         driver.put("informationUri", "https://hashmark.yunusemremahir.com.tr");
         ArrayNode rules = driver.putArray("rules");
-        for (Map.Entry<String, String> rule : new java.util.TreeMap<>(RULE_TEXT).entrySet()) {
-            ObjectNode node = rules.addObject();
-            node.put("id", rule.getKey());
-            node.putObject("shortDescription").put("text", rule.getValue());
-        }
+        // Yerleşik kurallar + bulgularda geçen .hashmark.yml özel etiketleri (borç sayılır → warning)
+        Map<String, String> ruleText = new java.util.TreeMap<>(RULE_TEXT);
 
         ArrayNode results = mapper.createArrayNode();
         for (DebtDto d : debts) {
@@ -137,8 +134,9 @@ public class DebtExportService {
             }
             ObjectNode result = results.addObject();
             String label = d.getLabel() == null ? "NOTE" : d.getLabel();
+            ruleText.putIfAbsent(label, "Custom label " + label + " in a code comment");
             result.put("ruleId", label);
-            result.put("level", SARIF_LEVELS.getOrDefault(label, "none"));
+            result.put("level", SARIF_LEVELS.getOrDefault(label, "warning"));
             result.putObject("message").put("text", d.getContent() == null ? "" : d.getContent());
 
             ObjectNode physical = result.putArray("locations").addObject().putObject("physicalLocation");
@@ -155,6 +153,11 @@ public class DebtExportService {
             LocalDate due = d.getDueDate();
             if (due != null) props.put("dueDate", due.toString());
             if (d.getPermalink() != null) props.put("permalink", d.getPermalink());
+        }
+        for (Map.Entry<String, String> rule : ruleText.entrySet()) {
+            ObjectNode node = rules.addObject();
+            node.put("id", rule.getKey());
+            node.putObject("shortDescription").put("text", rule.getValue());
         }
 
         ObjectNode run = mapper.createObjectNode();
