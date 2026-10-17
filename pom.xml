@@ -27,7 +27,9 @@
         <url/>
     </scm>
     <properties>
-        <java.version>17</java.version>
+        <!-- surefire argLine'ında @{argLine} için boş varsayılan -->
+        <argLine></argLine>
+        <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
     </properties>
     <dependencies>
@@ -140,6 +142,41 @@
 
     <build>
         <plugins>
+            <!-- JDK 23+ annotation processor'ları kendiliğinden çalıştırmaz; Lombok açıkça tanımlanır -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <!-- Mockito agent'ı açıkça yüklenir: JDK 21+ çalışma anında agent eklemeyi uyarıyla karşılıyor,
+                 ileriki sürümlerde varsayılan olarak engelleyecek. ${org.mockito:mockito-core:jar} yolunu
+                 dependency:properties üretir. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

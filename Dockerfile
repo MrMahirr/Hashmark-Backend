@@ -1,5 +1,5 @@
 # Build stage
-FROM maven:3.9.9-eclipse-temurin-21 AS build
+FROM maven:3.9.11-eclipse-temurin-25 AS build
 WORKDIR /app
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
@@ -7,8 +7,13 @@ COPY src ./src
 RUN mvn clean package -DskipTests -B
 
 # Run stage
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:25-jre-jammy
 WORKDIR /app
+
+# Healthcheck (burada ve docker-compose.yml) curl kullanır; Temurin 25 imajı curl içermez.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/*.jar app.jar
 
 # Root olmayan kullanıcı; yazılabilir tek yer /tmp (compose'ta tmpfs).

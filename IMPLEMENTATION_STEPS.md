@@ -828,7 +828,7 @@
 
 - [x] `README.md` dosyasi olustur:
   - Proje tanimi
-  - Gereksinimler: Java 17+, PostgreSQL 18+, Maven
+  - Gereksinimler: Java 25, PostgreSQL 18+, Maven
   - Kurulum adimlari:
     1. PostgreSQL'de `hashmark` veritabani olustur
     2. `.env.example`'i `.env` olarak kopyala, degerleri doldur

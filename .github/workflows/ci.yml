@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "21", cache: maven }
+        with: { distribution: temurin, java-version: "25", cache: maven }
       - name: mvn verify
         env:
           HASHMARK_TEST_DB_URL: jdbc:postgresql://localhost:5432/hashmark_it

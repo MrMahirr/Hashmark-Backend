@@ -119,7 +119,7 @@ kill "$STATS_PID" 2>/dev/null || true; STATS_PID=""
 if [ "$PROFILE" = "1" ]; then
     echo "== JFR kaydı kapatılıyor ve özetleniyor"
     docker stop -t 30 ${P}-app >/dev/null
-    JDK=eclipse-temurin:21-jdk
+    JDK=eclipse-temurin:25-jdk
     docker run --rm -v "$(dpath "$OUT/jfr"):/jfr" "$JDK" sh -c '
         jfr view hot-methods /jfr/rec.jfr > /jfr/hot-methods.txt
         jfr print --events jdk.ExecutionSample --stack-depth 512 /jfr/rec.jfr > /jfr/samples.txt
