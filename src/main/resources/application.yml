@@ -103,13 +103,18 @@ rate-limit:
   auth-per-minute: ${RATE_LIMIT_AUTH_PER_MINUTE:30}   # /auth/** (IP başına)
   scan-per-minute: ${RATE_LIMIT_SCAN_PER_MINUTE:10}   # POST /scan/** (kullanıcı başına)
 
+# Anahtar dönüşü: yeni anahtar *_SECRET'e, eskisi *_PREVIOUS_SECRETS'e (virgülle) yazılır. Adımlar: docs/KEY_ROTATION.md
 jwt:
   secret: ${JWT_SECRET}
+  previous-secrets: ${JWT_PREVIOUS_SECRETS:}       # refresh süresi (7 gün) dolunca boşaltılır
   access-token-expiry: 900000
   refresh-token-expiry: 604800000
 
 encryption:
-  secret: ${ENCRYPTION_SECRET}
+  secret: ${ENCRYPTION_SECRET}                      # önerilen: base64:<32 bayt> (openssl rand -base64 32)
+  previous-secrets: ${ENCRYPTION_PREVIOUS_SECRETS:} # yeniden şifreleme işi bitince boşaltılır
+  reencrypt:
+    enabled: ${ENCRYPTION_REENCRYPT_ENABLED:true}
 
 # E-posta: Brevo işlemsel API (https://app.brevo.com -> SMTP & API -> API Keys).
 # Gönderici adresi Brevo'da doğrulanmış olmalıdır.

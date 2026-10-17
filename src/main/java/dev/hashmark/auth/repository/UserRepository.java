@@ -43,6 +43,23 @@ public class UserRepository {
         return jdbcTemplate.query(sql, userRowMapper);
     }
 
+    /** Anahtar dönüşü: geçerli önekle başlamayan şifreli token'lar, id sırasıyla ({@code afterId}'den sonra). */
+    public record StoredToken(long userId, String githubToken) {}
+
+    public List<StoredToken> findTokensWithoutPrefix(String prefix, long afterId, int limit) {
+        return jdbcTemplate.query(
+                "SELECT id, github_token FROM users WHERE github_token IS NOT NULL AND id > ? " +
+                "AND left(github_token, ?) <> ? ORDER BY id LIMIT ?",
+                (rs, i) -> new StoredToken(rs.getLong("id"), rs.getString("github_token")),
+                afterId, prefix.length(), prefix, limit);
+    }
+
+    /** Yalnızca değer okunduğundan beri değişmediyse yazar (eşzamanlı giriş yeni token yazmış olabilir). */
+    public boolean replaceGithubToken(long userId, String expected, String replacement) {
+        return jdbcTemplate.update("UPDATE users SET github_token = ? WHERE id = ? AND github_token = ?",
+                replacement, userId, expected) == 1;
+    }
+
     /** GitHub erişim jetonunu siler; hesap ve diğer veriler kalır. */
     public int clearGithubToken(Long userId) {
         return jdbcTemplate.update("UPDATE users SET github_token = NULL WHERE id = ?", userId);

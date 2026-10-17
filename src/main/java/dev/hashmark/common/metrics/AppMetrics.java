@@ -71,6 +71,15 @@ public class AppMetrics {
                 .increment();
     }
 
+    /** Anahtar dönüşü: result "ok" (yeniden şifrelendi) veya "failed" (çözülemedi). */
+    public void reencrypted(String result, int count) {
+        Counter.builder("hashmark.crypto.reencrypted")
+                .description("Geçerli anahtarla yeniden şifrelenen değerler")
+                .tag("result", result)
+                .register(registry)
+                .increment(count);
+    }
+
     public void githubRateLimitRemaining(long remaining) {
         githubRateLimitRemaining.set(remaining);
     }
