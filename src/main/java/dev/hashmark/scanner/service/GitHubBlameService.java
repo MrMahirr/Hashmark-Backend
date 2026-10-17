@@ -1,7 +1,9 @@
 package dev.hashmark.scanner.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.scanner.dto.BlameRange;
 import org.slf4j.Logger;
@@ -47,7 +49,7 @@ public class GitHubBlameService {
             """;
 
     private final GitHubHttpClient http;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = JsonMapper.builder().build();
 
     public GitHubBlameService(GitHubHttpClient http) {
         this.http = http;
@@ -86,7 +88,7 @@ public class GitHubBlameService {
         } catch (ApiException e) {
             log.info("Blame skipped for {}:{} ({})", repoFullName, path, e.getMessage());
             return Optional.empty();
-        } catch (IOException e) {
+        } catch (IOException | JacksonException e) {
             log.info("Blame failed for {}:{}", repoFullName, path, e);
             return Optional.empty();
         }

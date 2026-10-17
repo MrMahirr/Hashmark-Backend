@@ -38,7 +38,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void unknownPathIs404NotServerError() {
         var ex = new org.springframework.web.servlet.resource.NoResourceFoundException(
-                org.springframework.http.HttpMethod.GET, "/actuator/health");
+                org.springframework.http.HttpMethod.GET, "/actuator/health", "No static resource");
         assertEquals(HttpStatus.NOT_FOUND, handler.handleNotFound(ex).getStatusCode());
     }
 

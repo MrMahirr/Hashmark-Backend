@@ -1,7 +1,8 @@
 package dev.hashmark.debt.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.service.DebtExportService.ExportFile;
@@ -19,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DebtExportServiceTest {
 
     private final DebtExportService service = new DebtExportService();
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = JsonMapper.builder().build();
 
     private DebtDto debt(long id, String label, String content) {
         return DebtDto.builder()
