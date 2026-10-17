@@ -1,5 +1,8 @@
 package dev.hashmark;
 
+import dev.hashmark.auth.repository.OAuthStateRepository;
+import dev.hashmark.auth.repository.RefreshTokenRepository;
+import dev.hashmark.auth.repository.UserRepository;
 import dev.hashmark.common.util.FingerprintUtil;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.dto.DebtFilterRequest;
@@ -7,9 +10,14 @@ import dev.hashmark.debt.dto.PageResponse;
 import dev.hashmark.debt.dto.ReplaceResult;
 import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
+import dev.hashmark.notification.repository.NotificationRepository;
 import dev.hashmark.report.dto.TrendDataPoint;
 import dev.hashmark.report.repository.ReportRepository;
+import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.scanner.job.ScanResultWriter;
 import dev.hashmark.scanner.model.ScanJob;
+import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.repository.ScanSnapshotRepository;
 import org.flywaydb.core.Flyway;
@@ -56,6 +64,7 @@ class DatabaseIntegrationTest {
     private ScanJobRepository jobs;
     private ReportRepository reports;
     private ScanSnapshotRepository snapshots;
+    private ScanResultWriter writer;
 
     private long userId;
     private long repoId;
@@ -77,6 +86,8 @@ class DatabaseIntegrationTest {
         jobs = new ScanJobRepository(jdbc);
         reports = new ReportRepository(jdbc);
         snapshots = new ScanSnapshotRepository(jdbc);
+        writer = new ScanResultWriter(new DataSourceTransactionManager(dataSource), jobs, debts,
+                new RepoRepository(jdbc), snapshots);
     }
 
     @AfterEach
@@ -360,8 +371,13 @@ class DatabaseIntegrationTest {
     void queueLifecycleClaimHeartbeatRecoveryAndGuard() {
         migrateAll();
 
+        assertEquals(0, jobs.countPending());
+        assertEquals(0.0, jobs.oldestPendingAgeSeconds(), "boş kuyrukta yaş 0");
+
         ScanJob queued = jobs.enqueue(repoId, userId, "dev");
         assertEquals("PENDING", queued.getStatus());
+        assertEquals(1, jobs.countPending(), "kuyruk metriği: bekleyen sayısı");
+        assertTrue(jobs.oldestPendingAgeSeconds() >= 0.0);
         assertEquals("dev", queued.getBranch());
         assertThrows(DuplicateKeyException.class, () -> jobs.enqueue(repoId, userId, null),
                 "repo başına tek aktif iş");
@@ -369,6 +385,8 @@ class DatabaseIntegrationTest {
         List<ScanJob> claimed = jobs.claimPending(5);
         assertEquals(1, claimed.size());
         assertEquals("RUNNING", claimed.get(0).getStatus());
+        assertEquals(1, jobs.countRunning(), "kuyruk metriği: çalışan sayısı");
+        assertEquals(0, jobs.countPending());
         assertEquals(1, claimed.get(0).getAttempts());
         assertTrue(jobs.claimPending(5).isEmpty(), "aynı iş iki kez alınmamalı");
         assertThrows(DuplicateKeyException.class, () -> jobs.enqueue(repoId, userId, null), "RUNNING de aktif sayılır");
@@ -398,6 +416,188 @@ class DatabaseIntegrationTest {
         assertEquals("f".repeat(40), done.getCommitSha());
         assertEquals(10, done.getFilesScanned());
         jobs.enqueue(repoId, userId, null);
+    }
+
+    private ScanResult result(String sha) {
+        return new ScanResult(1, 0, 0, Set.of(), Set.of(), false, null, sha);
+    }
+
+    @Test
+    void scanResultIsWrittenAtomically() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        jobs.claimPending(1);
+
+        var replaced = writer.write(job.getId(), repoId, List.of(debt("A.java", 1, "TODO", "x")),
+                result("a".repeat(40)), null);
+
+        assertTrue(replaced.isPresent());
+        assertEquals("DONE", jobs.findById(job.getId()).orElseThrow().getStatus());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM debts WHERE repo_id = ?", Integer.class, repoId));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()));
+        assertEquals("a".repeat(40), jdbc.queryForObject("SELECT last_scanned_sha FROM repos WHERE id = ?",
+                String.class, repoId));
+    }
+
+    @Test
+    void scanResultWriteIsSkippedWhenJobIsNoLongerRunning() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        jobs.claimPending(1);
+        assertTrue(writer.write(job.getId(), repoId, List.of(debt("A.java", 1, "TODO", "x")),
+                result("a".repeat(40)), null).isPresent());
+
+        // geç kalan ikinci çalıştırma: iş zaten DONE → hiçbir şey yazılmaz, snapshot çoğalmaz
+        var second = writer.write(job.getId(), repoId, List.of(debt("B.java", 1, "FIXME", "y")),
+                result("b".repeat(40)), null);
+
+        assertTrue(second.isEmpty());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM debts WHERE repo_id = ?", Integer.class, repoId));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()));
+        assertEquals("a".repeat(40), jdbc.queryForObject("SELECT commit_sha FROM scan_jobs WHERE id = ?",
+                String.class, job.getId()));
+    }
+
+    @Test
+    void scanResultRollsBackEverythingWhenALaterStepFails() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        jobs.claimPending(1);
+        // snapshot adımını düşürmek için tabloyu kaldır
+        jdbc.execute("DROP TABLE scan_snapshots CASCADE");
+
+        assertThrows(RuntimeException.class, () -> writer.write(job.getId(), repoId,
+                List.of(debt("A.java", 1, "TODO", "x")), result("a".repeat(40)), null));
+
+        assertEquals("RUNNING", jobs.findById(job.getId()).orElseThrow().getStatus(), "iş kapatılmamalı");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM debts WHERE repo_id = ?", Integer.class, repoId),
+                "borçlar geri alınmalı");
+    }
+
+    @Test
+    void snapshotSaveIsIdempotentPerJob() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        snapshots.save(repoId, job.getId(), null, 3, Map.of("TODO", 3), 3, 0);
+        snapshots.save(repoId, job.getId(), null, 5, Map.of("TODO", 5), 2, 0);
+
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()));
+        assertEquals(3, jdbc.queryForObject("SELECT total_open FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()), "ilk yazım korunur");
+    }
+
+    @Test
+    void completeOnlyClosesRunningJobs() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        assertFalse(jobs.complete(job.getId(), "DONE", 0, 0, 0, 0, null, null), "PENDING iş kapatılamaz");
+        jobs.claimPending(1);
+        assertTrue(jobs.complete(job.getId(), "DONE", 0, 0, 0, 0, null, null));
+        assertFalse(jobs.complete(job.getId(), "FAILED", 0, 0, 0, 0, null, "late"), "ikinci kapatma yok sayılır");
+        assertEquals("DONE", jobs.findById(job.getId()).orElseThrow().getStatus());
+    }
+
+    // ------------------------------------------------------------------
+    // Veri yaşam döngüsü (retention)
+    // ------------------------------------------------------------------
+
+    private long insertJob(long repo, String status, String finishedAgo) {
+        return jdbc.queryForObject(
+                "INSERT INTO scan_jobs (repo_id, user_id, status, created_at, finished_at) " +
+                "VALUES (?, ?, ?, NOW() - CAST(? AS INTERVAL), NOW() - CAST(? AS INTERVAL)) RETURNING id",
+                Long.class, repo, userId, status, finishedAgo, finishedAgo);
+    }
+
+    @Test
+    void retentionDeletesOldFinishedJobsButKeepsLatestPerRepo() {
+        migrateAll();
+        long old1 = insertJob(repoId, "DONE", "200 days");
+        long old2 = insertJob(repoId, "FAILED", "150 days");
+        long recent = insertJob(repoId, "DONE", "10 days");
+        long otherRepo = jdbc.queryForObject(
+                "INSERT INTO repos (user_id, github_repo_id, full_name) VALUES (?, ?, 'o/x') RETURNING id",
+                Long.class, userId, "r-" + UUID.randomUUID());
+        long onlyJobOfOther = insertJob(otherRepo, "DONE", "300 days");
+        snapshots.save(repoId, old1, null, 1, Map.of(), 1, 0);
+
+        assertEquals(1, jobs.deleteFinishedOlderThan(90, 1), "parti sınırına uyar");
+        assertEquals(1, jobs.deleteFinishedOlderThan(90, 100));
+        assertEquals(0, jobs.deleteFinishedOlderThan(90, 100), "idempotent");
+
+        assertTrue(jobs.findById(old1).isEmpty());
+        assertTrue(jobs.findById(old2).isEmpty());
+        assertTrue(jobs.findById(recent).isPresent());
+        assertTrue(jobs.findById(onlyJobOfOther).isPresent(), "deponun son işi tarama durumu için korunur");
+        assertNull(jdbc.queryForObject("SELECT scan_job_id FROM scan_snapshots WHERE repo_id = ?", Long.class, repoId),
+                "snapshot kalır, iş bağlantısı boşalır");
+    }
+
+    @Test
+    void retentionNeverDeletesActiveJobs() {
+        migrateAll();
+        insertJob(repoId, "DONE", "200 days");
+        jdbc.update("INSERT INTO scan_jobs (repo_id, user_id, status, created_at) " +
+                    "VALUES (?, ?, 'PENDING', NOW() - INTERVAL '400 days')", repoId, userId);
+        assertEquals(1, jobs.deleteFinishedOlderThan(90, 100));
+        assertEquals(1, jobs.countPending());
+    }
+
+    private void insertSnapshot(String takenAt, int totalOpen, int added, int resolved) {
+        jdbc.update("INSERT INTO scan_snapshots (repo_id, taken_at, total_open, todo_count, added, resolved) " +
+                    "VALUES (?, CAST(? AS TIMESTAMP), ?, ?, ?, ?)", repoId, takenAt, totalOpen, totalOpen, added, resolved);
+    }
+
+    @Test
+    void retentionCompactsOldSnapshotsToWeeklyWithoutChangingTrend() {
+        migrateAll();
+        // 200 gün önceki haftanın salı/çarşamba/perşembesi + bir sonraki hafta + yakın tarih
+        LocalDate monday = LocalDate.now().minusDays(200).with(java.time.DayOfWeek.MONDAY);
+        insertSnapshot(monday.plusDays(1) + " 10:00", 5, 5, 0);
+        insertSnapshot(monday.plusDays(2) + " 10:00", 6, 2, 1);
+        insertSnapshot(monday.plusDays(3) + " 10:00", 7, 3, 2);
+        insertSnapshot(monday.plusDays(8) + " 10:00", 4, 0, 3);
+        insertSnapshot(LocalDate.now().minusDays(1) + " 10:00", 9, 5, 0);
+        LocalDate trendDay = monday.plusWeeks(3);
+        List<TrendDataPoint> before = reports.getTrendFromSnapshots(userId, null, trendDay);
+
+        assertEquals(2, snapshots.compactToWeekly(90));
+        assertEquals(0, snapshots.compactToWeekly(90), "idempotent");
+
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots", Integer.class));
+        Map<String, Object> week = jdbc.queryForMap(
+                "SELECT total_open, added, resolved FROM scan_snapshots WHERE taken_at < ?",
+                Timestamp.valueOf(monday.plusDays(7).atStartOfDay()));
+        assertEquals(7, week.get("total_open"), "haftanın son değeri");
+        assertEquals(10, week.get("added"), "haftanın toplamı");
+        assertEquals(3, week.get("resolved"));
+        assertEquals(before, reports.getTrendFromSnapshots(userId, null, trendDay), "trend değişmemeli");
+    }
+
+    @Test
+    void retentionDeletesSnapshotsOlderThanLimit() {
+        migrateAll();
+        insertSnapshot(LocalDate.now().minusMonths(25) + " 10:00", 1, 1, 0);
+        insertSnapshot(LocalDate.now().minusMonths(23) + " 10:00", 2, 1, 0);
+        assertEquals(1, snapshots.deleteOlderThanMonths(24, 100));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots", Integer.class));
+    }
+
+    @Test
+    void retentionDeletesOnlyOldReadNotifications() {
+        migrateAll();
+        String sql = "INSERT INTO notifications (user_id, title, description, type, is_read, created_at) " +
+                     "VALUES (?, 't', 'd', 'INFO', ?, NOW() - CAST(? AS INTERVAL))";
+        jdbc.update(sql, userId, true, "200 days");   // silinir
+        jdbc.update(sql, userId, false, "400 days");  // okunmamış: kalır
+        jdbc.update(sql, userId, true, "10 days");    // yeni: kalır
+        NotificationRepository notifications = new NotificationRepository(jdbc);
+
+        assertEquals(1, notifications.deleteReadOlderThan(180, 100));
+        assertEquals(0, notifications.deleteReadOlderThan(180, 100), "idempotent");
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM notifications", Integer.class));
     }
 
     @Test
@@ -572,6 +772,61 @@ class DatabaseIntegrationTest {
         settings.markDigestSent(userId, friday);
         assertEquals(0, settings.findDigestRecipients("FRIDAY", friday).size(), "aynı gün ikinci kez gönderilmez");
         assertEquals(1, settings.findDigestRecipients("FRIDAY", friday.plusWeeks(1)).size());
+    }
+
+    @Test
+    void refreshTokenIsSingleUseAndReuseIsDetected() {
+        migrateAll();
+        RefreshTokenRepository tokens = new RefreshTokenRepository(jdbc);
+        tokens.insert("j1", "fam", userId, 60_000);
+
+        assertTrue(tokens.markUsedIfActive("j1"));
+        assertFalse(tokens.markUsedIfActive("j1"), "ikinci kullanım reddedilmeli");
+
+        var state = tokens.findState("j1").orElseThrow();
+        assertTrue(state.used());
+        assertFalse(state.revoked());
+        assertEquals("fam", state.familyId());
+
+        tokens.insert("j2", "fam", userId, 60_000);
+        assertEquals(2, tokens.revokeFamily("fam"));
+        assertFalse(tokens.markUsedIfActive("j2"), "iptal edilen aile kullanılamaz");
+        assertTrue(tokens.findState("nope").isEmpty());
+    }
+
+    @Test
+    void expiredRefreshTokenCannotBeUsed() {
+        migrateAll();
+        RefreshTokenRepository tokens = new RefreshTokenRepository(jdbc);
+        tokens.insert("old", "fam", userId, -1000);
+        assertFalse(tokens.markUsedIfActive("old"));
+    }
+
+    @Test
+    void oauthStateIsConsumedOnce() {
+        migrateAll();
+        OAuthStateRepository states = new OAuthStateRepository(jdbc);
+        states.insert("s1", 60_000);
+        states.insert("s2", -1000);
+        assertTrue(states.consume("s1"));
+        assertFalse(states.consume("s1"), "state tek kullanımlık");
+        assertFalse(states.consume("s2"), "süresi dolan state reddedilir");
+        assertFalse(states.consume("unknown"));
+        assertEquals(1, states.deleteExpired());
+    }
+
+    @Test
+    void deletingUserRemovesAllTheirData() {
+        migrateAll();
+        RefreshTokenRepository tokens = new RefreshTokenRepository(jdbc);
+        tokens.insert("j1", "fam", userId, 60_000);
+        jdbc.update("INSERT INTO debts (repo_id, file_path, line_no, label, content, fingerprint) VALUES (?, 'A.java', 1, 'TODO', 'x', 'fp')", repoId);
+
+        assertEquals(1, new UserRepository(jdbc).deleteById(userId));
+
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM repos WHERE user_id = ?", Integer.class, userId));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM debts", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM refresh_tokens", Integer.class));
     }
 
     private void insertSnapshot(long repo, LocalDate day, int total, int added, int resolved) {

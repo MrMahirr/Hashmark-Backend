@@ -32,15 +32,15 @@ public class AuthController {
     @GetMapping("/callback")
     @Operation(summary = "OAuth callback - JWT dondur")
     @ApiResponse(responseCode = "200")
-    public LoginResponse callback(@RequestParam String code) {
-        return authService.handleCallback(code);
+    public LoginResponse callback(@RequestParam String code, @RequestParam String state) {
+        return authService.handleCallback(code, state);
     }
 
     @PostMapping("/refresh")
-    @Operation(summary = "Access token yenile")
+    @Operation(summary = "Token yenile (refresh token rotation: yeni access + refresh doner)")
     @ApiResponse(responseCode = "200")
-    public Map<String, String> refresh(@RequestBody RefreshRequest request) {
-        return Map.of("accessToken", authService.refresh(request.getRefreshToken()));
+    public LoginResponse refresh(@RequestBody RefreshRequest request) {
+        return authService.refresh(request.getRefreshToken());
     }
 
     @PostMapping("/logout")

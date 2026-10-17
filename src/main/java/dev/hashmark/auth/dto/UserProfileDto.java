@@ -15,4 +15,8 @@ public class UserProfileDto {
     /** GitHub erişim jetonu kayıtlı mı (bağlantı kesildiyse false). */
     private boolean githubConnected;
     private LocalDateTime createdAt;
+    /** Onay kapısı açık ve geçerli sürüme onay yok: istemci /consent sayfasına yönlendirmeli. */
+    private boolean consentRequired;
+    private Integer consentVersion;
+    private LocalDateTime consentAcceptedAt;
 }

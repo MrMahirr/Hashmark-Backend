@@ -1,10 +1,10 @@
 package dev.hashmark.debt.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.debt.dto.DebtDto;
 
@@ -40,9 +40,10 @@ public class DebtExportService {
             "DOC", "Documentation comment",
             "INFO", "Informational comment");
 
-    private final ObjectMapper mapper = new ObjectMapper()
-            .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    // Jackson 3: java.time desteği yerleşik; tarihler ISO-8601 metin olarak yazılır
+    private final ObjectMapper mapper = JsonMapper.builder()
+            .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
+            .build();
 
     public ExportFile export(List<DebtDto> debts, String format) {
         String normalized = format == null ? "csv" : format.trim().toLowerCase(Locale.ROOT);

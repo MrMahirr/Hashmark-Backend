@@ -1,0 +1,34 @@
+# Bildirim kanalı: Telegram botu (bot oluşturmak için @BotFather; chat_id için botla yazışıp
+# https://api.telegram.org/bot<TOKEN>/getUpdates adresine bakın).
+#   monitoring/secrets/telegram_token   -> yalnızca bot jetonu (dosya git'e girmez)
+# chat_id değerini aşağıda kendi sohbetinizle değiştirin. Başka kanal (e-posta, webhook, Slack) için
+# receivers bölümünü https://prometheus.io/docs/alerting/latest/configuration/ ile değiştirebilirsiniz.
+
+route:
+  receiver: telegram
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [severity="critical"]
+      receiver: telegram
+      repeat_interval: 1h
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/secrets/telegram_token
+        chat_id: 1   # TODO(ZORUNLU): 1 yer tutucudur; kendi chat_id değerinizi yazın, yoksa alarm hiçbir yere gitmez
+        parse_mode: ""
+        message: |
+          [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})
+          {{ range .Alerts }}{{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+
+inhibit_rules:
+  # Backend tamamen düştüyse türev alarmları (gecikme, 5xx, kuyruk) bastır.
+  - source_matchers: [alertname="BackendDown"]
+    target_matchers: [alertname!~"BackendDown|PublicEndpointDown", severity=~"warning|critical"]
+    equal: []

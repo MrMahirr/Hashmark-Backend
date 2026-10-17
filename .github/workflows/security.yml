@@ -1,0 +1,26 @@
+name: security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"   # her pazartesi: yeni CVE'ler için
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-check:
+    name: OWASP Dependency-Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25", cache: maven }
+      - name: CVSS >= 7 build'i düşürür
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: >
+          ./mvnw -B org.owasp:dependency-check-maven:check
+          -DfailBuildOnCVSS=7 -DnvdApiKey="$NVD_API_KEY"

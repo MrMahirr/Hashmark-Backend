@@ -10,9 +10,9 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class GitHubOAuthService {
@@ -26,22 +26,35 @@ public class GitHubOAuthService {
     @Value("${github.callback-url}")
     private String callbackUrl;
 
+    /** İstenen OAuth kapsamı. Özel depo taraması için `repo` gerekir; yalnızca açık depolar için `public_repo`. */
+    @Value("${github.oauth-scope:repo,user:email}")
+    private String oauthScope;
+
+    @Value("${github.oauth-url:https://github.com}")
+    private String oauthUrl;
+
+    @Value("${github.api-url:https://api.github.com}")
+    private String apiUrl;
+
     private final RestTemplate restTemplate;
 
     public GitHubOAuthService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
     }
 
-    public String buildAuthorizationUrl() {
-        return "https://github.com/login/oauth/authorize" +
-                "?client_id=" + clientId +
-                "&redirect_uri=" + callbackUrl +
-                "&scope=repo,user:email" +
-                "&state=" + UUID.randomUUID();
+    public String buildAuthorizationUrl(String state) {
+        return UriComponentsBuilder.fromUriString(oauthUrl + "/login/oauth/authorize")
+                .queryParam("client_id", clientId)
+                .queryParam("redirect_uri", callbackUrl)
+                .queryParam("scope", oauthScope)
+                .queryParam("state", state)
+                .encode()
+                .build()
+                .toUriString();
     }
 
     public String exchangeCodeForToken(String code) {
-        String url = "https://github.com/login/oauth/access_token";
+        String url = oauthUrl + "/login/oauth/access_token";
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/json");
@@ -69,7 +82,7 @@ public class GitHubOAuthService {
     }
 
     public GitHubUserDto fetchUserInfo(String accessToken) {
-        String url = "https://api.github.com/user";
+        String url = apiUrl + "/user";
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + accessToken);

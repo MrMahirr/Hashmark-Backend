@@ -2,8 +2,10 @@ package dev.hashmark.scanner.service;
 
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.scanner.config.ScanProperties;
+import dev.hashmark.common.metrics.AppMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -27,15 +29,22 @@ public class GitHubHttpClient {
     private static final Logger log = LoggerFactory.getLogger(GitHubHttpClient.class);
     private static final int MAX_ATTEMPTS = 4;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
-
+    private final HttpClient httpClient;
     private final ScanProperties properties;
+    private final AppMetrics metrics;
 
     public GitHubHttpClient(ScanProperties properties) {
+        this(properties, null);
+    }
+
+    @Autowired
+    public GitHubHttpClient(ScanProperties properties, AppMetrics metrics) {
         this.properties = properties;
+        this.metrics = metrics;
+        this.httpClient = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .connectTimeout(Duration.ofMillis(properties.getHttpConnectTimeoutMs()))
+                .build();
     }
 
     public String apiUrl() {
@@ -43,7 +52,9 @@ public class GitHubHttpClient {
     }
 
     public HttpRequest.Builder request(URI uri, String token) {
+        // timeout: yanıt başlıkları gelene kadar geçen süre. Gövde akışı tarama süresi sınırıyla korunur.
         return HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofMillis(properties.getHttpResponseTimeoutMs()))
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", "2022-11-28")
@@ -59,6 +70,7 @@ public class GitHubHttpClient {
             try {
                 HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
+                recordRateLimit(response.headers());
 
                 if (status == 403 || status == 429) {
                     long waitMillis = rateLimitWaitMillis(response.headers());
@@ -92,6 +104,19 @@ public class GitHubHttpClient {
                 throw ApiException.serviceUnavailable("Scan was interrupted");
             }
         }
+    }
+
+    private void recordRateLimit(HttpHeaders headers) {
+        if (metrics == null) {
+            return;
+        }
+        headers.firstValue("X-RateLimit-Remaining").ifPresent(v -> {
+            try {
+                metrics.githubRateLimitRemaining(Long.parseLong(v.trim()));
+            } catch (NumberFormatException ignored) {
+                // geçersiz başlık yok sayılır
+            }
+        });
     }
 
     public static void closeQuietly(InputStream stream) {

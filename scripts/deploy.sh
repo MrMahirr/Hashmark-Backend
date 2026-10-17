@@ -59,7 +59,7 @@ RETRIES=10
 DELAY=5
 HEALTHY=true
 
-for SERVICE in postgres redis backend frontend nginx; do
+for SERVICE in postgres backend frontend nginx; do
     echo -n "  $SERVICE: "
     for i in $(seq 1 $RETRIES); do
         STATUS=$(docker inspect --format='{{.State.Health.Status}}' "hashmark_${SERVICE}" 2>/dev/null || echo "unknown")

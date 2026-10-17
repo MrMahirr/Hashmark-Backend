@@ -1,0 +1,183 @@
+# Çalıştırma: scripts/check-monitoring.sh   (promtool test rules)
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: yüksek 5xx oranı alarm verir
+    interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="backend",status="200"}'
+        values: '0+90x15'
+      - series: 'http_server_requests_seconds_count{job="backend",status="500"}'
+        values: '0+10x15'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: HighServerErrorRate
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: HighServerErrorRate
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "5xx oranı %2'nin üstünde"
+              description: "Son 5 dakikada isteklerin 10% kadarı 5xx. Son loglara requestId ile bakın."
+
+  - name: sağlıklı trafik alarm vermez
+    interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="backend",status="200"}'
+        values: '0+100x15'
+      - series: 'http_server_requests_seconds_count{job="backend",status="500"}'
+        values: '0+0x15'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: HighServerErrorRate
+        exp_alerts: []
+
+  - name: havuzda sürekli bekleyen varsa alarm
+    interval: 1m
+    input_series:
+      - series: 'hikaricp_connections_pending{job="backend",pool="HikariPool-1"}'
+        values: '0 0 3x10'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: DbPoolWaiting
+        exp_alerts:
+          - exp_labels: { severity: warning, job: backend, pool: HikariPool-1 }
+            exp_annotations:
+              summary: "DB bağlantı havuzunda bekleyen istek var"
+              description: "5 dakikadır bağlantı bekleyen iş parçacığı var; havuz (maximum-pool-size) veya yavaş sorgular darboğaz."
+
+  - name: eski kuyruk işi alarm verir
+    interval: 1m
+    input_series:
+      - series: 'hashmark_scan_queue_oldest_age_seconds{job="backend"}'
+        values: '900x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ScanQueueBacklog
+        exp_alerts:
+          - exp_labels: { severity: warning, job: backend }
+            exp_annotations:
+              summary: "Tarama kuyruğunda 10 dakikadan eski iş var"
+              description: "En eski bekleyen iş 15m 0s bekliyor. İşçi sayısı/GitHub limitini kontrol edin."
+
+  - name: backend düşünce alarm
+    interval: 1m
+    input_series:
+      - series: 'up{job="backend",instance="backend:8081"}'
+        values: '1 1 0x5'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: BackendDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: backend, instance: "backend:8081" }
+            exp_annotations:
+              summary: "Backend metrikleri alınamıyor"
+              description: "Prometheus 2 dakikadır backend:8081 adresine ulaşamıyor (çökme, OOM-kill veya yeniden başlatma döngüsü)."
+
+  - name: sertifika bitimine 10 gün kala alarm
+    interval: 1m
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="https://x/"}'
+        values: '864000x200'   # sabit: 10 gün (time() 0'dan başladığı için bitişe <14 gün kalır)
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: TlsCertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: { severity: warning, job: blackbox-https, instance: "https://x/" }
+            exp_annotations:
+              summary: "TLS sertifikası 14 günden az süre içinde bitiyor: https://x/"
+              description: "Certbot yenilemesini kontrol edin (certbot renew --dry-run)."
+
+  - name: DB zaman aşımları artınca alarm
+    interval: 1m
+    input_series:
+      - series: 'hashmark_db_timeout_total{job="backend",kind="lock"}'
+        values: '0+2x15'
+      - series: 'hashmark_db_timeout_total{job="backend",kind="statement"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: DbTimeouts
+        exp_alerts:
+          - exp_labels: { severity: warning, kind: lock }
+            exp_annotations:
+              summary: "DB zaman aşımları artıyor (lock)"
+              description: "Son 10 dakikada 20 istek DB zaman aşımıyla 503 aldı. statement: yavaş sorgu (scripts/pg-top-queries.sh); lock: uzun kilit tutan migrasyon/oturum (pg_stat_activity)."
+
+  - name: vakum geride kalırsa alarm, küçük tabloda alarm yok
+    interval: 1m
+    input_series:
+      - series: 'hashmark_db_table_dead_rows{job="backend",table="debts"}'
+        values: '50000x500'
+      - series: 'hashmark_db_table_live_rows{job="backend",table="debts"}'
+        values: '100000x500'
+      - series: 'hashmark_db_table_dead_rows{job="backend",table="users"}'
+        values: '500x500'
+      - series: 'hashmark_db_table_live_rows{job="backend",table="users"}'
+        values: '100x500'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: DbAutovacuumLagging
+        exp_alerts: []
+      - eval_time: 7h
+        alertname: DbAutovacuumLagging
+        exp_alerts:
+          - exp_labels: { severity: warning, job: backend, table: debts }
+            exp_annotations:
+              summary: "Otomatik vakum geride: debts"
+              description: "6 saattir ölü satır oranı %20'nin üstünde. Uzun açık transaction (idle in transaction) vakumu engelliyor olabilir; docs/POSTGRES_TUNING.md → 'Vakum geride'."
+
+  - name: WAL arşivi 15 dk başarısızsa alarm, kısa aksaklıkta alarm yok
+    interval: 1m
+    input_series:
+      - series: 'hashmark_db_wal_archive_failing{job="backend"}'
+        values: '0 1x5 0x5 1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WalArchivingFailing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: WalArchivingFailing
+        exp_alerts:
+          - exp_labels: { severity: critical, job: backend }
+            exp_annotations:
+              summary: "WAL arşivlenemiyor (PITR)"
+              description: "15 dakikadır son arşiv denemesi başarısız. Depo/anahtar erişimi ya da stanza: docker logs hashmark_postgres | grep archive-push. WAL 2 GiB birikince atılır ve PITR boşluğu oluşur (docs/PITR.md)."
+
+  - name: tatbikat 100 günü geçince alarm
+    interval: 4m   # 5 dk bakış penceresinden kısa olmalı (seri bayatlamasın)
+    input_series:
+      - series: 'hashmark_restore_drill_last_success_timestamp_seconds'
+        values: '0x37000'
+    alert_rule_test:
+      - eval_time: 90d
+        alertname: RestoreDrillOverdue
+        exp_alerts: []
+      - eval_time: 101d
+        alertname: RestoreDrillOverdue
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Geri yükleme tatbikatı gecikti (>100 gün)"
+              description: "Üç ayda bir tatbikat şartı (plan Faz 2): ./scripts/pitr-restore-test.sh çalıştırın, sonucu Hashmark-Vault'a yazın."
+
+  - name: PITR yedeği 26 saati geçince alarm
+    interval: 1m
+    input_series:
+      - series: 'hashmark_pitr_backup_last_success_timestamp_seconds'
+        values: '0x2000'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: PitrBackupStale
+        exp_alerts: []
+      - eval_time: 28h
+        alertname: PitrBackupStale
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "26 saattir başarılı PITR temel yedeği yok"
+              description: "Cron çalışmıyor olabilir. Temel yedek eskidikçe geri yükleme daha çok WAL oynatır ve uzar."

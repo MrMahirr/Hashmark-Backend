@@ -14,6 +14,9 @@ import java.util.List;
 @Service
 public class GitHubRepoService {
 
+    @org.springframework.beans.factory.annotation.Value("${github.api-url:https://api.github.com}")
+    private String apiUrl = "https://api.github.com";
+
     private final RestTemplate restTemplate;
 
     public GitHubRepoService(RestTemplate restTemplate) {
@@ -21,7 +24,7 @@ public class GitHubRepoService {
     }
 
     public List<GitHubRepoDto> fetchUserRepos(String githubToken) {
-        String url = "https://api.github.com/user/repos?per_page=100&visibility=all";
+        String url = apiUrl + "/user/repos?per_page=100&visibility=all";
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + githubToken);

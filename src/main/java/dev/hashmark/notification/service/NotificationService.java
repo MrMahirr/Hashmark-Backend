@@ -1,5 +1,6 @@
 package dev.hashmark.notification.service;
 
+import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.notification.dto.NotificationDto;
 import dev.hashmark.notification.model.Notification;
 import dev.hashmark.notification.repository.NotificationRepository;
@@ -35,7 +36,10 @@ public class NotificationService {
     }
 
     public void markAsRead(Long id, Long userId) {
-        notificationRepository.markAsRead(id, userId);
+        // Başkasının bildirimi "yok" sayılır (K4): sessiz başarı yerine 404, diğer nesne uçlarıyla tutarlı
+        if (notificationRepository.markAsRead(id, userId) == 0) {
+            throw ApiException.notFound("Notification not found");
+        }
     }
 
     public void markAllAsRead(Long userId) {

@@ -1,0 +1,1 @@
+This repository is private. Hashmark stores only file paths and marked comment lines (with their commit author) from it; source code is not stored. Comment lines may contain private information; confirm that you accept this before scanning.

@@ -1,6 +1,7 @@
 package dev.hashmark.scanner.service;
 
 import dev.hashmark.common.exception.ApiException;
+import dev.hashmark.consent.ConsentService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.dto.ScanStartResponse;
@@ -14,10 +15,12 @@ public class ScanService {
 
     private final RepoRepository repoRepository;
     private final ScanJobRepository scanJobRepository;
+    private final ConsentService consentService;
 
-    public ScanService(RepoRepository repoRepository, ScanJobRepository scanJobRepository) {
+    public ScanService(RepoRepository repoRepository, ScanJobRepository scanJobRepository, ConsentService consentService) {
         this.repoRepository = repoRepository;
         this.scanJobRepository = scanJobRepository;
+        this.consentService = consentService;
     }
 
     /** İşi kalıcı kuyruğa ekler; çalıştırmayı {@code ScanJobDispatcher} üstlenir. */
@@ -27,6 +30,7 @@ public class ScanService {
         if (!Boolean.TRUE.equals(repo.getTracked())) {
             throw ApiException.badRequest("Repository is not tracked; add it first");
         }
+        consentService.requirePrivateRepoAck(repo);
 
         ScanJob job;
         try {

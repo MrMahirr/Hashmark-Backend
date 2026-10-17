@@ -1,15 +1,109 @@
+# Docker log rotasyonu (veri saklama politikası): konteyner başına en fazla 5 × 10 MB.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # === PostgreSQL ===
   postgres:
-    image: postgres:16-alpine
+    # Resmi postgres:18-alpine + pgBackRest (PITR). Ayrıntı: docs/PITR.md
+    build:
+      context: ./postgres
+    image: hashmark-postgres:18
     container_name: hashmark_postgres
+    logging: *default-logging
     restart: unless-stopped
+    # PID 1 = tini. pgBackRest'in asenkron arşiv süreci arka plana çatallanır; init yoksa yetim süreç postmaster'a
+    # kalır ve hata koduyla çıktığında PostgreSQL bunu ÇÖKME sayıp tüm bağlantıları düşürür (yerel testte görüldü).
+    init: true
+    # Sunucu ayarları (Faz 2 ince ayar). Bellek değerleri ~2–4 GB'lık tek sunucu içindir (backend 1 GB alır);
+    # sunucu büyürse .env'den yükseltin: shared_buffers ≈ Postgres'e ayrılan RAM'in %25'i,
+    # effective_cache_size ≈ %50–75'i. Değişiklik Postgres yeniden başlatması ister (docker compose up -d postgres).
+    # Ayrıntı ve gerekçe: docs/POSTGRES_TUNING.md
+    command:
+      - postgres
+      # Yavaş sorgu analizi (scripts/pg-top-queries.sh)
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - log_min_duration_statement=1000
+      # Veri minimizasyonu: yavaş sorgu logu bağlı parametreleri (yorum metni) yazmasın; hata logu
+      # DETAIL ("Failing row contains ...") satırını yazmasın. Sorgu metni yalnızca $1 yer tutucularıyla kalır.
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_error_verbosity=terse
+      # Bellek
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-256MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-768MB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-8MB}
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-64MB}
+      # Bağlantı: Hikari (15) + Flyway + yedek/izleme betikleri için bol pay; varsayılan 100 gereksiz bellek ayırır.
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-50}
+      # Güvenlik ağı (uygulama da oturum başında ayarlar): açık unutulan transaction kilit ve vakumu tutmasın.
+      - -c
+      - idle_in_transaction_session_timeout=${PG_IDLE_IN_TX_TIMEOUT:-5min}
+      # SSD için planlayıcı maliyeti
+      - -c
+      - random_page_cost=1.1
+      # Otomatik vakum gözlemi: 10 sn'den uzun süren vakum/analyze loglanır; I/O süresi pg_stat_statements'a girer.
+      - -c
+      - log_autovacuum_min_duration=10s
+      - -c
+      - track_io_timing=on
+      # Sık silinen/güncellenen tablolar (debts, scan_jobs) için daha erken vakum
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.05
+      # PITR (docs/PITR.md): WAL sürekli arşivlenir. Depo (pitr.env) yoksa pgbackrest-archive-push.sh WAL'ı atar, birikmez.
+      # archive_timeout: trafik azken de en geç 5 dk'da bir WAL kapanıp arşive gider (RPO ≈ 5 dk).
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=/usr/local/bin/pgbackrest-archive-push.sh %p
+      - -c
+      - archive_timeout=${PG_ARCHIVE_TIMEOUT:-5min}
+    # Paralel sorgular /dev/shm kullanır; Docker varsayılanı (64 MB) work_mem ile yetmeyebilir.
+    shm_size: 256mb
+    # PITR deposu ve sırları (S3 anahtarı, şifreleme parolası) yalnızca bu dosyada; örnek: postgres/pitr.env.example.
+    # Dosya yoksa PITR kapalıdır. (env_file required:false → Docker Compose 2.24+)
+    env_file:
+      - path: ./pitr.env
+        required: false
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-hashmark}
       POSTGRES_USER: ${POSTGRES_USER:-hashmark}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # pgBackRest'in sır içermeyen sabit ayarları (pitr.env bunları ezebilir)
+      PGBACKREST_STANZA: hashmark
+      PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
+      PGBACKREST_PG1_USER: ${POSTGRES_USER:-hashmark}
+      PGBACKREST_PG1_DATABASE: ${POSTGRES_DB:-hashmark}
+      PGBACKREST_ARCHIVE_ASYNC: "y"
+      PGBACKREST_SPOOL_PATH: /var/spool/pgbackrest
+      # Depo ulaşılamazsa WAL en fazla bu kadar birikir, sonra atılır (disk dolmasın; o aralıkta PITR boşluğu oluşur)
+      PGBACKREST_ARCHIVE_PUSH_QUEUE_MAX: 2GiB
+      PGBACKREST_COMPRESS_TYPE: zst
+      PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+      PGBACKREST_REPO1_RETENTION_FULL_TYPE: time
+      PGBACKREST_REPO1_RETENTION_FULL: ${PITR_RETENTION_DAYS:-14}
+      PGBACKREST_LOG_LEVEL_CONSOLE: info
+      PGBACKREST_LOG_LEVEL_FILE: "off"
+      PGBACKREST_PROCESS_MAX: "2"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # PG18 imajı veriyi /var/lib/postgresql/18/docker altında tutar; bu yüzden üst dizin bağlanır.
+      # Yeni volume adı: eski PG16 volume'u (postgres_data) geri dönüş için dokunulmadan kalır.
+      - postgres18_data:/var/lib/postgresql
     networks:
       - hashmark-network
     healthcheck:
@@ -19,62 +113,71 @@ services:
       retries: 5
       start_period: 10s
 
-  # === Redis ===
-  redis:
-    image: redis:7-alpine
-    container_name: hashmark_redis
-    restart: unless-stopped
-    volumes:
-      - redis_data:/data
-    networks:
-      - hashmark-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # === Backend (Spring Boot) ===
   backend:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: hashmark_backend
+    logging: *default-logging
     restart: unless-stopped
+    # Kaynak sınırı: JVM -XX:MaxRAMPercentage=75 bu sınırı görür (OOM-kill yerine kontrollü heap).
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     environment:
       - SERVER_PORT=8080
       - DATABASE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-hashmark}
-      - DATABASE_USERNAME=${POSTGRES_USER:-hashmark}
-      - DATABASE_PASSWORD=${POSTGRES_PASSWORD}
+      # Uygulama rolü: DB_APP_USER verilince ayrı, tablo sahibi olmayan rol → RLS etkin (scripts/create-app-role.sh).
+      # Boşsa sahip rol kullanılır ve RLS politikaları atlanır (hashmark_db_rls_enforced = 0).
+      - DATABASE_USERNAME=${DB_APP_USER:-${POSTGRES_USER:-hashmark}}
+      - DATABASE_PASSWORD=${DB_APP_PASSWORD:-${POSTGRES_PASSWORD}}
+      - DB_STATEMENT_TIMEOUT=${DB_STATEMENT_TIMEOUT:-30s}
+      - DB_LOCK_TIMEOUT=${DB_LOCK_TIMEOUT:-10s}
+      # Migrasyonlar her zaman sahip rolle
+      - FLYWAY_USER=${FLYWAY_USER:-${POSTGRES_USER:-hashmark}}
+      - FLYWAY_PASSWORD=${FLYWAY_PASSWORD:-${POSTGRES_PASSWORD}}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL}
       - JWT_SECRET=${JWT_SECRET}
+      - JWT_PREVIOUS_SECRETS=${JWT_PREVIOUS_SECRETS:-}
       - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
+      - ENCRYPTION_PREVIOUS_SECRETS=${ENCRYPTION_PREVIOUS_SECRETS:-}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
       - BREVO_API_KEY=${BREVO_API_KEY:-}
       - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL:-noreply@hashmark.dev}
       - BREVO_SENDER_NAME=${BREVO_SENDER_NAME:-Hashmark}
       - APP_URL=${APP_URL:-http://localhost:3000}
       - REPORT_TIMEZONE=${REPORT_TIMEZONE:-Europe/Istanbul}
+      - SWAGGER_ENABLED=${SWAGGER_ENABLED:-false}
+      - RATE_LIMIT_AUTH_PER_MINUTE=${RATE_LIMIT_AUTH_PER_MINUTE:-30}
+      - RATE_LIMIT_SCAN_PER_MINUTE=${RATE_LIMIT_SCAN_PER_MINUTE:-10}
+      - GITHUB_OAUTH_SCOPE=${GITHUB_OAUTH_SCOPE:-repo,user:email}
+      - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-15}
+      - DB_POOL_MIN_IDLE=${DB_POOL_MIN_IDLE:-5}
+      - CONSENT_ENFORCED=${CONSENT_ENFORCED:-false}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
     networks:
       - hashmark-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 40s
 
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
+  postgres18_data:
     driver: local
 
 networks:

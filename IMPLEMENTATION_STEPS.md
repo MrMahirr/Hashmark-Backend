@@ -98,7 +98,7 @@
 ### 1.5 - Docker Compose Kurulumu
 
 - [x] `docker-compose.yml` olustur:
-  - PostgreSQL 16 container (`hashmark-postgres`)
+  - PostgreSQL 18 container (`hashmark-postgres`)
   - 5432 port mapping
   - Volume tanimi (`postgres_data`)
 - [x] `docker-compose up -d` ile veritabanini baslat
@@ -828,7 +828,7 @@
 
 - [x] `README.md` dosyasi olustur:
   - Proje tanimi
-  - Gereksinimler: Java 17+, PostgreSQL 16+, Maven
+  - Gereksinimler: Java 25, PostgreSQL 18+, Maven
   - Kurulum adimlari:
     1. PostgreSQL'de `hashmark` veritabani olustur
     2. `.env.example`'i `.env` olarak kopyala, degerleri doldur

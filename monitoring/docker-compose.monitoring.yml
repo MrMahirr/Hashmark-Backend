@@ -1,0 +1,82 @@
+# Hashmark izleme yığını. Uygulama yığınından (docker-compose.yml) bağımsız başlatılır:
+#   docker compose -f monitoring/docker-compose.monitoring.yml up -d
+# Hiçbir servis host'a port açmaz; Prometheus arayüzüne erişmek için SSH tüneli kullanın:
+#   ssh -L 9090:localhost:9090 sunucu   (ve aşağıda `ports` satırını geçici olarak 127.0.0.1'e açın)
+# Backend metrikleri yönetim portundan (8081) çekilir; bu port nginx'te ve host'ta yayınlanmaz.
+
+# Docker log rotasyonu (veri saklama politikası): konteyner başına en fazla 5 × 10 MB.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: hashmark_prometheus
+    logging: *default-logging
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks: [hashmark-network]
+    mem_limit: 512m
+    # ports:
+    #   - "127.0.0.1:9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: hashmark_alertmanager
+    logging: *default-logging
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./secrets:/etc/alertmanager/secrets:ro
+      - alertmanager_data:/alertmanager
+    networks: [hashmark-network]
+    mem_limit: 128m
+
+  blackbox:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: hashmark_blackbox
+    logging: *default-logging
+    restart: unless-stopped
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks: [hashmark-network]
+    mem_limit: 64m
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: hashmark_node_exporter
+    logging: *default-logging
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($|/)
+    volumes:
+      - /:/host:ro,rslave
+      # backup-db.sh buraya hashmark_backup.prom yazar (yedek yaşı/başarısı alarmı için)
+      - ../backups/metrics:/textfile:ro
+    networks: [hashmark-network]
+    pid: host
+    mem_limit: 64m
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+
+networks:
+  hashmark-network:
+    name: hashmark-network
+    external: true

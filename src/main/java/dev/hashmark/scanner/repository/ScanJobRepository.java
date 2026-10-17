@@ -51,6 +51,25 @@ public class ScanJobRepository {
         return jdbcTemplate.queryForObject(sql, scanJobRowMapper, repoId, userId, branch);
     }
 
+    /** Kuyruk metrikleri: PENDING sayısı. */
+    public long countPending() {
+        Long n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM scan_jobs WHERE status = 'PENDING'", Long.class);
+        return n == null ? 0 : n;
+    }
+
+    /** Kuyruk metrikleri: en eski PENDING işin yaşı (sn); kuyruk boşsa 0. */
+    public double oldestPendingAgeSeconds() {
+        Double age = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(created_at))), 0) FROM scan_jobs WHERE status = 'PENDING'",
+                Double.class);
+        return age == null ? 0 : age;
+    }
+
+    public long countRunning() {
+        Long n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM scan_jobs WHERE status = 'RUNNING'", Long.class);
+        return n == null ? 0 : n;
+    }
+
     /** Bekleyen işleri atomik olarak sahiplenir (çoklu instance'ta aynı iş iki kez alınmaz). */
     public List<ScanJob> claimPending(int limit) {
         String sql = "UPDATE scan_jobs SET status = 'RUNNING', started_at = NOW(), heartbeat_at = NOW(), " +
@@ -75,11 +94,19 @@ public class ScanJobRepository {
         jdbcTemplate.update("UPDATE scan_jobs SET heartbeat_at = NOW() WHERE id = ? AND status = 'RUNNING'", jobId);
     }
 
-    public void complete(Long jobId, String status, int debtFound, int filesScanned, int filesSkipped,
-                         int filesFailed, String commitSha, String message) {
+    /**
+     * İşi bitirir. Yalnızca hâlâ RUNNING olan iş kapatılır: kalp atışı kesilip yeniden kuyruğa alınmış
+     * ya da başka bir çalıştırmayla bitmiş işin sonucunu geç kalan çalıştırma ezemez.
+     *
+     * @return iş gerçekten kapatıldıysa true
+     */
+    public boolean complete(Long jobId, String status, int debtFound, int filesScanned, int filesSkipped,
+                            int filesFailed, String commitSha, String message) {
         String sql = "UPDATE scan_jobs SET status = ?, debt_found = ?, files_scanned = ?, files_skipped = ?, " +
-                     "files_failed = ?, commit_sha = ?, message = ?, finished_at = NOW() WHERE id = ?";
-        jdbcTemplate.update(sql, status, debtFound, filesScanned, filesSkipped, filesFailed, commitSha, message, jobId);
+                     "files_failed = ?, commit_sha = ?, message = ?, finished_at = NOW() " +
+                     "WHERE id = ? AND status = 'RUNNING'";
+        return jdbcTemplate.update(sql, status, debtFound, filesScanned, filesSkipped, filesFailed, commitSha,
+                message, jobId) == 1;
     }
 
     /**
@@ -97,6 +124,21 @@ public class ScanJobRepository {
                       "AND COALESCE(heartbeat_at, started_at, created_at) < NOW() - (? * INTERVAL '1 minute')";
         return jdbcTemplate.update(requeue, maxAttempts, timeoutMinutes)
                 + jdbcTemplate.update(fail, maxAttempts, timeoutMinutes);
+    }
+
+    /**
+     * Saklama süresi dolmuş bitmiş işleri siler. Aktif işler ve her deponun en son işi (tarama durumu
+     * ucu onu gösterir) korunur. Snapshot'lardaki {@code scan_job_id} {@code ON DELETE SET NULL} ile boşalır.
+     *
+     * @return silinen satır sayısı (en fazla {@code limit})
+     */
+    public int deleteFinishedOlderThan(int days, int limit) {
+        String sql = "DELETE FROM scan_jobs WHERE id IN (" +
+                     "SELECT j.id FROM scan_jobs j WHERE j.status IN ('DONE', 'FAILED') " +
+                     "AND COALESCE(j.finished_at, j.created_at) < NOW() - (? * INTERVAL '1 day') " +
+                     "AND EXISTS (SELECT 1 FROM scan_jobs n WHERE n.repo_id = j.repo_id AND n.id > j.id) " +
+                     "ORDER BY j.id LIMIT ?)";
+        return jdbcTemplate.update(sql, days, limit);
     }
 
     public Optional<ScanJob> findLatestByRepoId(Long repoId) {

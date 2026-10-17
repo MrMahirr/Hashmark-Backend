@@ -1,0 +1,194 @@
+groups:
+  - name: hashmark-availability
+    rules:
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Backend metrikleri alınamıyor"
+          description: "Prometheus 2 dakikadır backend:8081 adresine ulaşamıyor (çökme, OOM-kill veya yeniden başlatma döngüsü)."
+
+      - alert: PublicEndpointDown
+        expr: probe_success{job="blackbox-https"} == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "Dışarıdan erişim başarısız: {{ $labels.instance }}"
+          description: "Kullanıcıların gördüğü adres 3 dakikadır 2xx dönmüyor (nginx, sertifika, DNS veya uygulama)."
+
+      - alert: TlsCertificateExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry{job="blackbox-https"} - time()) < 14 * 86400
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "TLS sertifikası 14 günden az süre içinde bitiyor: {{ $labels.instance }}"
+          description: "Certbot yenilemesini kontrol edin (certbot renew --dry-run)."
+
+  - name: hashmark-load
+    rules:
+      - alert: HighServerErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="backend",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_server_requests_seconds_count{job="backend"}[5m])), 1) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "5xx oranı %2'nin üstünde"
+          description: "Son 5 dakikada isteklerin {{ $value | humanizePercentage }} kadarı 5xx. Son loglara requestId ile bakın."
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_requests_seconds_bucket{job="backend",uri!~"/actuator.*"}[5m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 gecikme 1 sn'nin üstünde"
+          description: "Okuma uçları için yük altı hedefi < 1 sn (plan Bölüm 3.1). Değer: {{ $value | humanizeDuration }}."
+
+      - alert: DbPoolWaiting
+        expr: hikaricp_connections_pending{job="backend"} > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "DB bağlantı havuzunda bekleyen istek var"
+          description: "5 dakikadır bağlantı bekleyen iş parçacığı var; havuz (maximum-pool-size) veya yavaş sorgular darboğaz."
+
+      - alert: DbPoolTimeouts
+        expr: increase(hikaricp_connections_timeout_total{job="backend"}[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "DB bağlantısı alınamadı (zaman aşımı)"
+          description: "Havuz doldu, istekler 503/500 alıyor olabilir."
+
+      - alert: ScanQueueBacklog
+        expr: hashmark_scan_queue_oldest_age_seconds{job="backend"} > 600
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Tarama kuyruğunda 10 dakikadan eski iş var"
+          description: "En eski bekleyen iş {{ $value | humanizeDuration }} bekliyor. İşçi sayısı/GitHub limitini kontrol edin."
+
+      - alert: JvmHeapHigh
+        expr: |
+          sum(jvm_memory_used_bytes{job="backend",area="heap"})
+            / sum(jvm_memory_max_bytes{job="backend",area="heap"}) > 0.9
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "JVM heap %90'ın üstünde"
+          description: "OOM yaklaşıyor olabilir; GC ve bellek sızıntısına bakın."
+
+      - alert: GithubRateLimitLow
+        expr: hashmark_github_ratelimit_remaining{job="backend"} >= 0 and hashmark_github_ratelimit_remaining{job="backend"} < 500
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "GitHub API kalan hakkı 500'ün altında"
+          description: "Taramalar bekleyecek. Kalıcı ise GitHub App'e geçişi değerlendirin (plan Bölüm 7)."
+
+  - name: hashmark-security
+    rules:
+      - alert: RefreshTokenReuseDetected
+        expr: increase(hashmark_auth_refresh_reuse_detected_total{job="backend"}[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Refresh token yeniden kullanımı tespit edildi"
+          description: "Son 1 saatte {{ $value }} olay; bir token ailesi iptal edildi (çalıntı token olasılığı)."
+
+      - alert: RateLimitRejectionsSpike
+        expr: sum(rate(hashmark_ratelimit_rejected_total{job="backend"}[5m])) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Hız sınırı sürekli 429 üretiyor"
+          description: "Saldırı, hatalı istemci veya sınırların fazla düşük olması olabilir."
+
+  - name: hashmark-database
+    rules:
+      - alert: DbTimeouts
+        expr: sum by (kind) (increase(hashmark_db_timeout_total{job="backend"}[10m])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "DB zaman aşımları artıyor ({{ $labels.kind }})"
+          description: "Son 10 dakikada {{ $value | humanize }} istek DB zaman aşımıyla 503 aldı. statement: yavaş sorgu (scripts/pg-top-queries.sh); lock: uzun kilit tutan migrasyon/oturum (pg_stat_activity)."
+
+      - alert: DbAutovacuumLagging
+        expr: |
+          hashmark_db_table_dead_rows{job="backend"} > 10000
+            and hashmark_db_table_dead_rows{job="backend"}
+              / (hashmark_db_table_live_rows{job="backend"} + hashmark_db_table_dead_rows{job="backend"}) > 0.2
+        for: 6h
+        labels: { severity: warning }
+        annotations:
+          summary: "Otomatik vakum geride: {{ $labels.table }}"
+          description: "6 saattir ölü satır oranı %20'nin üstünde. Uzun açık transaction (idle in transaction) vakumu engelliyor olabilir; docs/POSTGRES_TUNING.md → 'Vakum geride'."
+
+      - alert: WalArchivingFailing
+        expr: hashmark_db_wal_archive_failing{job="backend"} == 1
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "WAL arşivlenemiyor (PITR)"
+          description: "15 dakikadır son arşiv denemesi başarısız. Depo/anahtar erişimi ya da stanza: docker logs hashmark_postgres | grep archive-push. WAL 2 GiB birikince atılır ve PITR boşluğu oluşur (docs/PITR.md)."
+
+  - name: hashmark-host
+    rules:
+      - alert: DiskUsageHigh
+        expr: |
+          (1 - node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}
+             / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}) > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Disk %80'in üstünde dolu: {{ $labels.mountpoint }}"
+          description: "Yedek/log/Postgres büyümesini kontrol edin."
+
+      - alert: BackupFailed
+        expr: hashmark_backup_last_run_success == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Son veritabanı yedeği başarısız"
+          description: "backup-db.sh hata ile bitti; gece yedeğini elle çalıştırıp çıktıya bakın."
+
+      - alert: BackupStale
+        expr: time() - hashmark_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "26 saattir başarılı yedek yok"
+          description: "Cron çalışmıyor olabilir. Ayrıca metrik hiç gelmiyorsa absent kuralı tetiklenir."
+
+      - alert: BackupMetricMissing
+        expr: absent(hashmark_backup_last_success_timestamp_seconds)
+        for: 1d
+        labels: { severity: warning }
+        annotations:
+          summary: "Yedek metriği hiç yok"
+          description: "backup-db.sh metrik dosyasını (backups/metrics/hashmark_backup.prom) yazmıyor veya node-exporter okumuyor."
+
+      - alert: PitrBackupFailed
+        expr: hashmark_pitr_backup_last_run_success == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Son PITR temel yedeği başarısız"
+          description: "pitr-backup.sh hata ile bitti; backups/pitr.log'a bakın (docs/PITR.md)."
+
+      - alert: PitrBackupStale
+        expr: time() - hashmark_pitr_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "26 saattir başarılı PITR temel yedeği yok"
+          description: "Cron çalışmıyor olabilir. Temel yedek eskidikçe geri yükleme daha çok WAL oynatır ve uzar."
+
+      - alert: RestoreDrillOverdue
+        expr: time() - hashmark_restore_drill_last_success_timestamp_seconds > 100 * 86400
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Geri yükleme tatbikatı gecikti (>100 gün)"
+          description: "Üç ayda bir tatbikat şartı (plan Faz 2): ./scripts/pitr-restore-test.sh çalıştırın, sonucu Hashmark-Vault'a yazın."
