@@ -30,7 +30,8 @@ public class GlobalExceptionHandler {
                 LocalDateTime.now(),
                 ex.getHttpStatus().value(),
                 ex.getHttpStatus().getReasonPhrase(),
-                ex.getMessage()
+                ex.getMessage(),
+                ex.getCode()
         );
         return new ResponseEntity<>(errorResponse, ex.getHttpStatus());
     }

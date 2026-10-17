@@ -1,5 +1,6 @@
 package dev.hashmark.report.scheduler;
 
+import dev.hashmark.consent.ConsentService;
 import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.auth.model.User;
 import dev.hashmark.report.service.EmailService;
@@ -28,11 +29,14 @@ public class WeeklyReportScheduler {
     private final EmailService emailService;
     private final UserSettingsRepository userSettingsRepository;
     private final ZoneId zone;
+    private final ConsentService consentService;
 
     public WeeklyReportScheduler(EmailService emailService, UserSettingsRepository userSettingsRepository,
+                                 ConsentService consentService,
                                  @Value("${report.timezone:Europe/Istanbul}") String timezone) {
         this.emailService = emailService;
         this.userSettingsRepository = userSettingsRepository;
+        this.consentService = consentService;
         this.zone = ZoneId.of(timezone);
     }
 
@@ -54,6 +58,10 @@ public class WeeklyReportScheduler {
         for (UserSettingsRepository.DigestRecipient recipient : recipients) {
             User user = recipient.user();
             UserSettings settings = recipient.settings();
+            // Onay kapısı açıkken onaysız kullanıcıya özet üretilmez (plan 5.10)
+            if (consentService.isProcessingBlocked(user.getId())) {
+                continue;
+            }
             try {
                 TenantContext.asUser(user.getId(), () -> {
                     if (emailService.sendWeeklyReport(user, settings)) {

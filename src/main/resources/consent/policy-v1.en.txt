@@ -1,0 +1,36 @@
+## Data we collect
+- Your GitHub profile: username, email address, name and avatar.
+- Names of the repositories you track and the branch you choose.
+- Paths of scanned files (e.g. src/app/main.ts).
+- Marked comment lines such as TODO, FIXME, HACK, XXX, NOTE (up to 500 characters) and their line numbers.
+- The commit author of each comment line: GitHub username and name.
+
+## Data we do not collect
+- Your source code, file contents and repository copies are not stored. The repository archive is processed in memory during a scan only and never written to disk.
+- Code lines around a comment are fetched live from GitHub only when you ask for them, and are not stored.
+
+## How it is protected
+- Your GitHub access token is stored encrypted.
+- Only you can access your data; it is kept separate from other users' data.
+- Comment lines and commit author names are currently stored unencrypted in the database, on servers with restricted access. Encrypting these fields is planned; when it ships, this text will be updated and your consent asked for again.
+- Comment text and access tokens are never written to application logs.
+
+## Why
+- To track and report the technical debt in your code and, if you enable it, to send a weekly summary email.
+
+## Retention
+- Debt records: for as long as your account exists and the repository is tracked.
+- Scan history 90 days; trend summaries 24 months; read notifications 180 days.
+- Backups: up to 30 days. Data you delete leaves the backups once this period ends.
+
+## Third parties
+- GitHub: the source of the data.
+- Brevo: only if the weekly summary is enabled; your email address and the summary content.
+
+## Your rights
+- You can withdraw your consent at any time under Settings → Privacy & data; scans and summaries stop.
+- You can permanently delete your account and all your data.
+- You can export your debt records.
+
+## Private repositories
+- Before a private repository is scanned for the first time, you are asked to confirm separately.

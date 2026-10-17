@@ -3,3 +3,4 @@
 # Konteyner içinde çalışan betikler: Windows checkout CRLF yaparsa sh/bash bozulur
 *.sh text eol=lf
 postgres/* text eol=lf
+src/main/resources/consent/* text eol=lf

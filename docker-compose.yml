@@ -164,6 +164,7 @@ services:
       - GITHUB_OAUTH_SCOPE=${GITHUB_OAUTH_SCOPE:-repo,user:email}
       - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-15}
       - DB_POOL_MIN_IDLE=${DB_POOL_MIN_IDLE:-5}
+      - CONSENT_ENFORCED=${CONSENT_ENFORCED:-false}
       - SENTRY_DSN=${SENTRY_DSN:-}
       - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
     networks:

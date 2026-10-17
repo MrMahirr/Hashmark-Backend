@@ -142,6 +142,14 @@ async:
   max-pool-size: 5
   queue-capacity: 50
 
+# Kullanıcı onayı (plan 5.10, K7). Metinler: resources/consent/ (README). Metin hukuki incelemeden geçene kadar
+# kapı KAPALI kalır; açılınca onaysız kullanıcı veri işleyen uçları kullanamaz (403 CONSENT_REQUIRED). Frontend'in
+# /consent sayfası yayında olmadan AÇMAYIN.
+consent:
+  enforced: ${CONSENT_ENFORCED:false}
+  policy-version: 1          # artırılınca herkesten yeniden onay istenir (yeni policy-vN.*.txt gerekir)
+  private-repo-version: 1
+
 # Veri saklama (plan Bölüm 5.6). Süreler gizlilik politikasında yazanla aynı olmalı.
 retention:
   enabled: ${RETENTION_ENABLED:true}
