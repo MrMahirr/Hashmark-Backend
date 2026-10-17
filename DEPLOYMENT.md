@@ -335,6 +335,18 @@ gunzip < backups/hashmark_backup_YYYYMMDD_HHMMSS.sql.gz | \
 
 ---
 
+### Yedeği doğrulama
+```bash
+./scripts/restore-test.sh          # en yeni yedeği geçici Postgres'e yükler, süreyi ve satır sayılarını yazar
+```
+Üç ayda bir çalıştırın; süreyi kaydedin (RTO ölçümü).
+
+## 15b. İzleme ve alarm
+Prometheus/Alertmanager yığını `monitoring/` altındadır; kurulum ve alarm listesi: `monitoring/README.md`.
+Metrikler **yönetim portundan (8081)** sunulur; bu port nginx'te yayınlanmaz ve host'a açılmaz.
+Postgres'e `pg_stat_statements` eklendi (`docker compose up -d postgres` ile yeniden başlatma gerekir);
+yavaş sorgular için `./scripts/pg-top-queries.sh`.
+
 ## 16. Rollback
 
 ```bash

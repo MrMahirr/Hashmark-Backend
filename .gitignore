@@ -46,3 +46,10 @@ nginx/certbot/
 
 ### Backups ###
 backups/
+
+### Load test sonuçları (özet Hashmark-Vault'ta tutulur) ###
+loadtest/results/
+
+### Monitoring secrets ###
+monitoring/secrets/*
+!monitoring/secrets/.gitkeep

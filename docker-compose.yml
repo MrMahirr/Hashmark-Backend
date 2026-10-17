@@ -4,6 +4,15 @@ services:
     image: postgres:16-alpine
     container_name: hashmark_postgres
     restart: unless-stopped
+    # Yavaş sorgu analizi için (scripts/pg-top-queries.sh). Değişiklik Postgres yeniden başlatması ister.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - log_min_duration_statement=1000
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-hashmark}
       POSTGRES_USER: ${POSTGRES_USER:-hashmark}
@@ -60,10 +69,12 @@ services:
       - GITHUB_OAUTH_SCOPE=${GITHUB_OAUTH_SCOPE:-repo,user:email}
       - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-15}
       - DB_POOL_MIN_IDLE=${DB_POOL_MIN_IDLE:-5}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
     networks:
       - hashmark-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 5

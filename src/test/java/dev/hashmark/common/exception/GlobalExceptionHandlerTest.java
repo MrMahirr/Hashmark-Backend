@@ -21,8 +21,30 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void exhaustedDbPoolBecomes503() {
+        var ex = new org.springframework.jdbc.CannotGetJdbcConnectionException(
+                "Failed to obtain JDBC Connection", new java.sql.SQLTransientConnectionException("timeout"));
+        ResponseEntity<ErrorResponse> response = handler.handleOverloaded(ex);
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertEquals("5", response.getHeaders().getFirst("Retry-After"));
+    }
+
+    @Test
     void taskRejectedBecomes503() {
         ResponseEntity<ErrorResponse> response = handler.handleOverloaded(new TaskRejectedException("full"));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+    }
+
+    @Test
+    void unknownPathIs404NotServerError() {
+        var ex = new org.springframework.web.servlet.resource.NoResourceFoundException(
+                org.springframework.http.HttpMethod.GET, "/actuator/health");
+        assertEquals(HttpStatus.NOT_FOUND, handler.handleNotFound(ex).getStatusCode());
+    }
+
+    @Test
+    void wrongMethodIs405() {
+        var ex = new org.springframework.web.HttpRequestMethodNotSupportedException("PUT");
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, handler.handleMethodNotAllowed(ex).getStatusCode());
     }
 }

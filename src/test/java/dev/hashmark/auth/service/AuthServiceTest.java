@@ -1,5 +1,7 @@
 package dev.hashmark.auth.service;
 
+import dev.hashmark.common.metrics.AppMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import dev.hashmark.auth.dto.LoginResponse;
 import dev.hashmark.auth.repository.OAuthStateRepository;
 import dev.hashmark.auth.repository.RefreshTokenRepository;
@@ -32,12 +34,14 @@ class AuthServiceTest {
     private final RefreshTokenRepository refreshTokens = mock(RefreshTokenRepository.class);
     private final OAuthStateRepository oauthStates = mock(OAuthStateRepository.class);
     private final GitHubOAuthService github = mock(GitHubOAuthService.class);
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    private final AppMetrics metrics = new AppMetrics(registry);
     private AuthService service;
 
     @BeforeEach
     void setUp() {
         service = new AuthService(github, mock(UserRepository.class), jwtUtil, mock(AesEncryptionUtil.class),
-                refreshTokens, oauthStates);
+                refreshTokens, oauthStates, metrics);
         ReflectionTestUtils.setField(service, "accessTokenExpiry", 900000L);
     }
 
@@ -66,6 +70,7 @@ class AuthServiceTest {
 
         assertThrows(ApiException.class, () -> service.refresh(old));
         verify(refreshTokens).revokeFamily("fam-1");
+        org.junit.jupiter.api.Assertions.assertEquals(1.0, registry.counter("hashmark.auth.refresh.reuse.detected").count());
     }
 
     @Test
@@ -77,6 +82,7 @@ class AuthServiceTest {
 
         assertThrows(ApiException.class, () -> service.refresh(old));
         verify(refreshTokens, never()).revokeFamily(anyString());
+        org.junit.jupiter.api.Assertions.assertEquals(0.0, registry.counter("hashmark.auth.refresh.reuse.detected").count());
     }
 
     @Test

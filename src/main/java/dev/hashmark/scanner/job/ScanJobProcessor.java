@@ -1,5 +1,6 @@
 package dev.hashmark.scanner.job;
 
+import dev.hashmark.common.metrics.AppMetrics;
 import dev.hashmark.auth.model.User;
 import dev.hashmark.auth.repository.UserRepository;
 import dev.hashmark.common.exception.ApiException;
@@ -45,12 +46,15 @@ public class ScanJobProcessor {
     private final RepoRepository repoRepository;
     private final AesEncryptionUtil aesEncryptionUtil;
     private final NotificationService notificationService;
+    private final AppMetrics metrics;
 
     public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanSnapshotRepository scanSnapshotRepository,
                             GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
                             DebtParserService debtParserService, DebtRepository debtRepository,
                             UserRepository userRepository, RepoRepository repoRepository,
-                            AesEncryptionUtil aesEncryptionUtil, NotificationService notificationService) {
+                            AesEncryptionUtil aesEncryptionUtil, NotificationService notificationService,
+                            AppMetrics metrics) {
+        this.metrics = metrics;
         this.scanJobRepository = scanJobRepository;
         this.scanSnapshotRepository = scanSnapshotRepository;
         this.gitHubFileService = gitHubFileService;
@@ -64,6 +68,17 @@ public class ScanJobProcessor {
     }
 
     public void process(ScanJob job) {
+        long startNanos = System.nanoTime();
+        String result = "failed";
+        try {
+            result = doProcess(job) ? "done" : "failed";
+        } finally {
+            metrics.scanFinished(result, java.time.Duration.ofNanos(System.nanoTime() - startNanos));
+        }
+    }
+
+    /** @return iş başarıyla tamamlandıysa true */
+    private boolean doProcess(ScanJob job) {
         Long jobId = job.getId();
         Long repoId = job.getRepoId();
         Long userId = job.getUserId();
@@ -107,15 +122,18 @@ public class ScanJobProcessor {
             saveSnapshot(repoId, jobId, result.commitSha(), replaced);
             notifyScanDone(userId, repo.getFullName(), replaced);
             enrichBlame(repoId, repo.getFullName(), plainToken, result.commitSha());
+            return true;
 
         } catch (ApiException e) {
             log.warn("Scan failed for repo {}: {}", repoId, e.getMessage());
             scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, e.getMessage());
             notifyQuietly(userId, "Scan failed", e.getMessage(), "ERROR");
+            return false;
         } catch (Exception e) {
             log.error("Scan failed for repo: " + repoId, e);
             scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, "Unexpected error while scanning");
             notifyQuietly(userId, "Scan failed", "Unexpected error while scanning", "ERROR");
+            return false;
         }
     }
 

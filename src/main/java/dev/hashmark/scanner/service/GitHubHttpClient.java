@@ -2,8 +2,10 @@ package dev.hashmark.scanner.service;
 
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.scanner.config.ScanProperties;
+import dev.hashmark.common.metrics.AppMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -29,9 +31,16 @@ public class GitHubHttpClient {
 
     private final HttpClient httpClient;
     private final ScanProperties properties;
+    private final AppMetrics metrics;
 
     public GitHubHttpClient(ScanProperties properties) {
+        this(properties, null);
+    }
+
+    @Autowired
+    public GitHubHttpClient(ScanProperties properties, AppMetrics metrics) {
         this.properties = properties;
+        this.metrics = metrics;
         this.httpClient = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(Duration.ofMillis(properties.getHttpConnectTimeoutMs()))
@@ -61,6 +70,7 @@ public class GitHubHttpClient {
             try {
                 HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
+                recordRateLimit(response.headers());
 
                 if (status == 403 || status == 429) {
                     long waitMillis = rateLimitWaitMillis(response.headers());
@@ -94,6 +104,19 @@ public class GitHubHttpClient {
                 throw ApiException.serviceUnavailable("Scan was interrupted");
             }
         }
+    }
+
+    private void recordRateLimit(HttpHeaders headers) {
+        if (metrics == null) {
+            return;
+        }
+        headers.firstValue("X-RateLimit-Remaining").ifPresent(v -> {
+            try {
+                metrics.githubRateLimitRemaining(Long.parseLong(v.trim()));
+            } catch (NumberFormatException ignored) {
+                // geçersiz başlık yok sayılır
+            }
+        });
     }
 
     public static void closeQuietly(InputStream stream) {

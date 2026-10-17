@@ -30,6 +30,12 @@ public class GitHubOAuthService {
     @Value("${github.oauth-scope:repo,user:email}")
     private String oauthScope;
 
+    @Value("${github.oauth-url:https://github.com}")
+    private String oauthUrl;
+
+    @Value("${github.api-url:https://api.github.com}")
+    private String apiUrl;
+
     private final RestTemplate restTemplate;
 
     public GitHubOAuthService(RestTemplate restTemplate) {
@@ -37,7 +43,7 @@ public class GitHubOAuthService {
     }
 
     public String buildAuthorizationUrl(String state) {
-        return UriComponentsBuilder.fromUriString("https://github.com/login/oauth/authorize")
+        return UriComponentsBuilder.fromUriString(oauthUrl + "/login/oauth/authorize")
                 .queryParam("client_id", clientId)
                 .queryParam("redirect_uri", callbackUrl)
                 .queryParam("scope", oauthScope)
@@ -48,7 +54,7 @@ public class GitHubOAuthService {
     }
 
     public String exchangeCodeForToken(String code) {
-        String url = "https://github.com/login/oauth/access_token";
+        String url = oauthUrl + "/login/oauth/access_token";
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/json");
@@ -76,7 +82,7 @@ public class GitHubOAuthService {
     }
 
     public GitHubUserDto fetchUserInfo(String accessToken) {
-        String url = "https://api.github.com/user";
+        String url = apiUrl + "/user";
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + accessToken);

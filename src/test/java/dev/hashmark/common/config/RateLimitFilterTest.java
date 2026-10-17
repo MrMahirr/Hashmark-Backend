@@ -65,4 +65,17 @@ class RateLimitFilterTest {
         assertEquals(200, status(filter, "GET", "/scan/5/status", "1.1.1.1"));
         assertEquals(200, status(filter, "GET", "/repos", "1.1.1.1"));
     }
+
+    @Test
+    void countsRejectionsPerScope() throws Exception {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        RateLimitFilter filter = new RateLimitFilter(1, 1, now::get, new dev.hashmark.common.metrics.AppMetrics(registry));
+        status(filter, "GET", "/auth/github", "1.1.1.1");
+        status(filter, "GET", "/auth/github", "1.1.1.1");
+        status(filter, "POST", "/scan/5", "1.1.1.1");
+        status(filter, "POST", "/scan/5", "1.1.1.1");
+        status(filter, "POST", "/scan/5", "1.1.1.1");
+        assertEquals(1.0, registry.counter("hashmark.ratelimit.rejected", "scope", "auth").count());
+        assertEquals(2.0, registry.counter("hashmark.ratelimit.rejected", "scope", "scan").count());
+    }
 }

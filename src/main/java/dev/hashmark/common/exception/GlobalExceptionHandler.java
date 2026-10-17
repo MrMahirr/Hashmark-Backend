@@ -53,13 +53,18 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
     }
 
-    /** Async havuz/kuyruk dolu: iç hata (500) yerine istemciye "sonra tekrar dene" döner. */
+    /**
+     * Async havuz/kuyruk dolu ya da DB bağlantı havuzu tükendi (Hikari zaman aşımı): iç hata (500) yerine
+     * istemciye hızlıca "sonra tekrar dene" döner. Tek satır uyarı; yük altında yığın izi log basmaz.
+     */
     @ExceptionHandler({
             java.util.concurrent.RejectedExecutionException.class,
-            org.springframework.core.task.TaskRejectedException.class
+            org.springframework.core.task.TaskRejectedException.class,
+            org.springframework.jdbc.CannotGetJdbcConnectionException.class,
+            java.sql.SQLTransientConnectionException.class
     })
     public ResponseEntity<ErrorResponse> handleOverloaded(Exception ex) {
-        org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class).warn("Async havuz dolu, istek reddedildi");
+        org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class).warn("Sistem yoğun, istek reddedildi (503): {}", ex.getClass().getSimpleName());
         ErrorResponse errorResponse = new ErrorResponse(
                 LocalDateTime.now(),
                 HttpStatus.SERVICE_UNAVAILABLE.value(),
@@ -69,6 +74,32 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Retry-After", "5")
                 .body(errorResponse);
+    }
+
+    /** Bilinmeyen yol/yöntem istemci hatasıdır; 500 sayılırsa 5xx uyarıları ve hata toplama kirlenir. */
+    @ExceptionHandler({
+            org.springframework.web.servlet.resource.NoResourceFoundException.class,
+            org.springframework.web.servlet.NoHandlerFoundException.class
+    })
+    public ResponseEntity<ErrorResponse> handleNotFound(Exception ex) {
+        ErrorResponse errorResponse = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.NOT_FOUND.value(),
+                HttpStatus.NOT_FOUND.getReasonPhrase(),
+                "Not found"
+        );
+        return new ResponseEntity<>(errorResponse, HttpStatus.NOT_FOUND);
+    }
+
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotAllowed(Exception ex) {
+        ErrorResponse errorResponse = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.METHOD_NOT_ALLOWED.value(),
+                HttpStatus.METHOD_NOT_ALLOWED.getReasonPhrase(),
+                "Method not allowed"
+        );
+        return new ResponseEntity<>(errorResponse, HttpStatus.METHOD_NOT_ALLOWED);
     }
 
     @ExceptionHandler(Exception.class)

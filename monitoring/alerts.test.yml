@@ -1,0 +1,93 @@
+# Çalıştırma: scripts/check-monitoring.sh   (promtool test rules)
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: yüksek 5xx oranı alarm verir
+    interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="backend",status="200"}'
+        values: '0+90x15'
+      - series: 'http_server_requests_seconds_count{job="backend",status="500"}'
+        values: '0+10x15'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: HighServerErrorRate
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: HighServerErrorRate
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "5xx oranı %2'nin üstünde"
+              description: "Son 5 dakikada isteklerin 10% kadarı 5xx. Son loglara requestId ile bakın."
+
+  - name: sağlıklı trafik alarm vermez
+    interval: 1m
+    input_series:
+      - series: 'http_server_requests_seconds_count{job="backend",status="200"}'
+        values: '0+100x15'
+      - series: 'http_server_requests_seconds_count{job="backend",status="500"}'
+        values: '0+0x15'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: HighServerErrorRate
+        exp_alerts: []
+
+  - name: havuzda sürekli bekleyen varsa alarm
+    interval: 1m
+    input_series:
+      - series: 'hikaricp_connections_pending{job="backend",pool="HikariPool-1"}'
+        values: '0 0 3x10'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: DbPoolWaiting
+        exp_alerts:
+          - exp_labels: { severity: warning, job: backend, pool: HikariPool-1 }
+            exp_annotations:
+              summary: "DB bağlantı havuzunda bekleyen istek var"
+              description: "5 dakikadır bağlantı bekleyen iş parçacığı var; havuz (maximum-pool-size) veya yavaş sorgular darboğaz."
+
+  - name: eski kuyruk işi alarm verir
+    interval: 1m
+    input_series:
+      - series: 'hashmark_scan_queue_oldest_age_seconds{job="backend"}'
+        values: '900x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ScanQueueBacklog
+        exp_alerts:
+          - exp_labels: { severity: warning, job: backend }
+            exp_annotations:
+              summary: "Tarama kuyruğunda 10 dakikadan eski iş var"
+              description: "En eski bekleyen iş 15m 0s bekliyor. İşçi sayısı/GitHub limitini kontrol edin."
+
+  - name: backend düşünce alarm
+    interval: 1m
+    input_series:
+      - series: 'up{job="backend",instance="backend:8081"}'
+        values: '1 1 0x5'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: BackendDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: backend, instance: "backend:8081" }
+            exp_annotations:
+              summary: "Backend metrikleri alınamıyor"
+              description: "Prometheus 2 dakikadır backend:8081 adresine ulaşamıyor (çökme, OOM-kill veya yeniden başlatma döngüsü)."
+
+  - name: sertifika bitimine 10 gün kala alarm
+    interval: 1m
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="https://x/"}'
+        values: '864000x200'   # sabit: 10 gün (time() 0'dan başladığı için bitişe <14 gün kalır)
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: TlsCertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: { severity: warning, job: blackbox-https, instance: "https://x/" }
+            exp_annotations:
+              summary: "TLS sertifikası 14 günden az süre içinde bitiyor: https://x/"
+              description: "Certbot yenilemesini kontrol edin (certbot renew --dry-run)."

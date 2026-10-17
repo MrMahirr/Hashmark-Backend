@@ -1,5 +1,6 @@
 package dev.hashmark.auth.service;
 
+import dev.hashmark.common.metrics.AppMetrics;
 import dev.hashmark.auth.dto.GitHubUserDto;
 import dev.hashmark.auth.dto.LoginResponse;
 import dev.hashmark.auth.model.User;
@@ -36,13 +37,15 @@ public class AuthService {
     private final AesEncryptionUtil aesEncryptionUtil;
     private final RefreshTokenRepository refreshTokens;
     private final OAuthStateRepository oauthStates;
+    private final AppMetrics metrics;
 
     @Value("${jwt.access-token-expiry}")
     private long accessTokenExpiry;
 
     public AuthService(GitHubOAuthService gitHubOAuthService, UserRepository userRepository, JwtUtil jwtUtil,
                        AesEncryptionUtil aesEncryptionUtil, RefreshTokenRepository refreshTokens,
-                       OAuthStateRepository oauthStates) {
+                       OAuthStateRepository oauthStates, AppMetrics metrics) {
+        this.metrics = metrics;
         this.gitHubOAuthService = gitHubOAuthService;
         this.userRepository = userRepository;
         this.jwtUtil = jwtUtil;
@@ -101,6 +104,7 @@ public class AuthService {
             refreshTokens.findState(claims.jti()).ifPresent(state -> {
                 if (state.used() && !state.revoked() && state.secondsSinceUsed() > REUSE_GRACE_SECONDS) {
                     int revoked = refreshTokens.revokeFamily(state.familyId());
+                    metrics.refreshReuseDetected();
                     log.warn("Refresh token yeniden kullanımı tespit edildi; kullanıcı={}, iptal edilen={}",
                             claims.userId(), revoked);
                 }

@@ -31,7 +31,39 @@ springdoc:
     path: /v1/api-docs
     enabled: ${SWAGGER_ENABLED:false}
 
+# Gözlemlenebilirlik: actuator AYRI bir portta (8081) çalışır; nginx bu portu yayınlamaz, compose'ta host'a açılmaz.
+# Prometheus iç ağdan backend:8081/actuator/prometheus adresini çeker.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:8081}
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 100ms,300ms,1s,3s
+    tags:
+      application: hashmark-backend
+
+# Hata toplama (Sentry). DSN boşsa hiçbir şey gönderilmez. Kişisel veri (IP, başlık, gövde) gönderilmez.
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: ${SENTRY_ENVIRONMENT:production}
+  send-default-pii: false
+  traces-sample-rate: 0.0
+
 github:
+  # Testlerde/yük testinde sahte GitHub'a yönlendirmek için; üretimde varsayılanlar kalır.
+  oauth-url: ${GITHUB_OAUTH_URL:https://github.com}
+  api-url: ${GITHUB_API_URL:https://api.github.com}
   client-id: ${GITHUB_CLIENT_ID}
   client-secret: ${GITHUB_CLIENT_SECRET}
   callback-url: ${GITHUB_CALLBACK_URL:http://localhost:3000/auth/callback}
@@ -78,10 +110,11 @@ async:
   queue-capacity: 50
 
 scan:
+  github-api-url: ${GITHUB_API_URL:https://api.github.com}
   max-file-size-bytes: 1048576      # bundan büyük dosyalar atlanır
   max-files: 20000                  # tek taramada işlenecek en fazla dosya
   max-duration-seconds: 900         # tek taramanın en uzun süresi
-  max-concurrent: 2                 # bu instance'ta aynı anda çalışacak tarama
+  max-concurrent: ${SCAN_MAX_CONCURRENT:2}                 # bu instance'ta aynı anda çalışacak tarama
   dispatch-interval-ms: 2000        # kuyruk kontrol aralığı
   heartbeat-timeout-minutes: 5      # kalp atışı gelmeyen RUNNING iş yeniden kuyruğa alınır
   max-attempts: 3                   # bir işin en fazla deneme sayısı

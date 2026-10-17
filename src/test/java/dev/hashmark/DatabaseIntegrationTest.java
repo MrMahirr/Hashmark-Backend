@@ -363,8 +363,13 @@ class DatabaseIntegrationTest {
     void queueLifecycleClaimHeartbeatRecoveryAndGuard() {
         migrateAll();
 
+        assertEquals(0, jobs.countPending());
+        assertEquals(0.0, jobs.oldestPendingAgeSeconds(), "boş kuyrukta yaş 0");
+
         ScanJob queued = jobs.enqueue(repoId, userId, "dev");
         assertEquals("PENDING", queued.getStatus());
+        assertEquals(1, jobs.countPending(), "kuyruk metriği: bekleyen sayısı");
+        assertTrue(jobs.oldestPendingAgeSeconds() >= 0.0);
         assertEquals("dev", queued.getBranch());
         assertThrows(DuplicateKeyException.class, () -> jobs.enqueue(repoId, userId, null),
                 "repo başına tek aktif iş");
@@ -372,6 +377,8 @@ class DatabaseIntegrationTest {
         List<ScanJob> claimed = jobs.claimPending(5);
         assertEquals(1, claimed.size());
         assertEquals("RUNNING", claimed.get(0).getStatus());
+        assertEquals(1, jobs.countRunning(), "kuyruk metriği: çalışan sayısı");
+        assertEquals(0, jobs.countPending());
         assertEquals(1, claimed.get(0).getAttempts());
         assertTrue(jobs.claimPending(5).isEmpty(), "aynı iş iki kez alınmamalı");
         assertThrows(DuplicateKeyException.class, () -> jobs.enqueue(repoId, userId, null), "RUNNING de aktif sayılır");

@@ -1,5 +1,7 @@
 package dev.hashmark.common.config;
 
+import dev.hashmark.common.metrics.AppMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,16 +33,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final int authPerMinute;
     private final int scanPerMinute;
     private final LongSupplier clock;
+    private final AppMetrics metrics;
     private final Map<String, ArrayDeque<Long>> hits = new ConcurrentHashMap<>();
 
-    public RateLimitFilter(int authPerMinute, int scanPerMinute) {
-        this(authPerMinute, scanPerMinute, System::currentTimeMillis);
+    public RateLimitFilter(int authPerMinute, int scanPerMinute, AppMetrics metrics) {
+        this(authPerMinute, scanPerMinute, System::currentTimeMillis, metrics);
     }
 
     RateLimitFilter(int authPerMinute, int scanPerMinute, LongSupplier clock) {
+        this(authPerMinute, scanPerMinute, clock, new AppMetrics(new SimpleMeterRegistry()));
+    }
+
+    RateLimitFilter(int authPerMinute, int scanPerMinute, LongSupplier clock, AppMetrics metrics) {
         this.authPerMinute = authPerMinute;
         this.scanPerMinute = scanPerMinute;
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     @Override
@@ -48,19 +56,23 @@ public class RateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = request.getRequestURI();
         String key = null;
+        String scope = null;
         int limit = 0;
 
         if (path.startsWith("/auth/")) {
             key = "auth:" + request.getRemoteAddr();
+            scope = "auth";
             limit = authPerMinute;
         } else if ("POST".equalsIgnoreCase(request.getMethod()) && path.startsWith("/scan")) {
             key = "scan:" + principalOrIp(request);
+            scope = "scan";
             limit = scanPerMinute;
         }
 
         if (key != null && limit > 0) {
             long retryAfterMs = tryAcquire(key, limit);
             if (retryAfterMs > 0) {
+                metrics.rateLimited(scope);
                 reject(response, retryAfterMs);
                 return;
             }

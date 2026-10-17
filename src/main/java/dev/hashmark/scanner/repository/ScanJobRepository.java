@@ -51,6 +51,25 @@ public class ScanJobRepository {
         return jdbcTemplate.queryForObject(sql, scanJobRowMapper, repoId, userId, branch);
     }
 
+    /** Kuyruk metrikleri: PENDING sayısı. */
+    public long countPending() {
+        Long n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM scan_jobs WHERE status = 'PENDING'", Long.class);
+        return n == null ? 0 : n;
+    }
+
+    /** Kuyruk metrikleri: en eski PENDING işin yaşı (sn); kuyruk boşsa 0. */
+    public double oldestPendingAgeSeconds() {
+        Double age = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(created_at))), 0) FROM scan_jobs WHERE status = 'PENDING'",
+                Double.class);
+        return age == null ? 0 : age;
+    }
+
+    public long countRunning() {
+        Long n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM scan_jobs WHERE status = 'RUNNING'", Long.class);
+        return n == null ? 0 : n;
+    }
+
     /** Bekleyen işleri atomik olarak sahiplenir (çoklu instance'ta aynı iş iki kez alınmaz). */
     public List<ScanJob> claimPending(int limit) {
         String sql = "UPDATE scan_jobs SET status = 'RUNNING', started_at = NOW(), heartbeat_at = NOW(), " +

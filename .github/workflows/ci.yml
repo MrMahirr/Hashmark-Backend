@@ -37,6 +37,13 @@ jobs:
           HASHMARK_TEST_DB_PASSWORD: it_pass
         run: ./mvnw -B verify
 
+  monitoring-config:
+    name: İzleme yapılandırması + alarm kuralı testleri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-monitoring.sh
+
   docker-build:
     name: Docker imajı derlenir
     runs-on: ubuntu-latest

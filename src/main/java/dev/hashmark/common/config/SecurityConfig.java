@@ -1,5 +1,6 @@
 package dev.hashmark.common.config;
 
+import dev.hashmark.common.metrics.AppMetrics;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,14 +22,24 @@ public class SecurityConfig {
     @Value("${springdoc.swagger-ui.enabled:false}")
     private boolean swaggerEnabled;
 
+    /** Actuator (health + prometheus) bu portta; yalnızca iç ağdan erişilir, nginx/compose yayınlamaz. */
+    @Value("${management.server.port:-1}")
+    private int managementPort;
+
+    @Value("${server.port:8080}")
+    private int serverPort;
+
     @Value("${rate-limit.auth-per-minute:30}")
     private int authPerMinute;
 
     @Value("${rate-limit.scan-per-minute:10}")
     private int scanPerMinute;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+    private final AppMetrics metrics;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, AppMetrics metrics) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.metrics = metrics;
     }
 
     @Bean
@@ -54,7 +65,12 @@ public class SecurityConfig {
                 .addHeaderWriter(new org.springframework.security.web.header.writers.StaticHeadersWriter("Permissions-Policy", "camera=(), microphone=(), geolocation=()"))
             )
             .authorizeHttpRequests(auth -> {
-                auth.requestMatchers("/auth/**", "/public/**", "/actuator/health").permitAll();
+                auth.requestMatchers("/auth/**", "/public/**").permitAll();
+                // Ayrı yönetim portundaki actuator istekleri kimliksiz; ana porttaki /actuator/** ise kapalıdır.
+                if (managementPort > 0 && managementPort != serverPort) {
+                    auth.requestMatchers(request -> request.getLocalPort() == managementPort
+                            && request.getRequestURI().startsWith("/actuator/")).permitAll();
+                }
                 if (swaggerEnabled) {
                     auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v1/api-docs/**").permitAll();
                 }
@@ -65,7 +81,7 @@ public class SecurityConfig {
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             // JWT filtresinden sonra: kullanıcı kimliği biliniyorsa kullanıcı bazlı sınırlar uygulanır.
-            .addFilterAfter(new RateLimitFilter(authPerMinute, scanPerMinute), JwtAuthenticationFilter.class);
+            .addFilterAfter(new RateLimitFilter(authPerMinute, scanPerMinute, metrics), JwtAuthenticationFilter.class);
 
         return http.build();
     }
