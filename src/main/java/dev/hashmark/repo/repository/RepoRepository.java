@@ -114,9 +114,10 @@ public class RepoRepository {
         return result;
     }
 
-    public void deleteByIdAndUserId(Long id, Long userId) {
+    /** @return silinen satır; başka kullanıcının ya da olmayan depo için 0 */
+    public int deleteByIdAndUserId(Long id, Long userId) {
         String sql = "DELETE FROM repos WHERE id = ? AND user_id = ?";
-        jdbcTemplate.update(sql, id, userId);
+        return jdbcTemplate.update(sql, id, userId);
     }
 
     public void updateLastScannedAt(Long repoId, LocalDateTime time) {

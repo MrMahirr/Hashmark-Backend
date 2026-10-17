@@ -36,9 +36,10 @@ public class NotificationRepository {
         jdbcTemplate.update(sql, notification.getUserId(), notification.getTitle(), notification.getDescription(), notification.getType(), notification.isRead(), notification.getCreatedAt());
     }
 
-    public void markAsRead(Long id, Long userId) {
+    /** @return etkilenen satır; başka kullanıcının ya da olmayan bildirim için 0 */
+    public int markAsRead(Long id, Long userId) {
         String sql = "UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?";
-        jdbcTemplate.update(sql, id, userId);
+        return jdbcTemplate.update(sql, id, userId);
     }
 
     /** Saklama: süresi dolmuş okunmuş bildirimleri siler. @return silinen satır (en fazla {@code limit}) */

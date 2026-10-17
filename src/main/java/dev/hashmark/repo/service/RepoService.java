@@ -102,7 +102,10 @@ public class RepoService {
     }
 
     public void deleteRepo(Long userId, Long repoId) {
-        repoRepository.deleteByIdAndUserId(repoId, userId);
+        // Başkasının deposu "yok" sayılır (K4): sessiz başarı yerine 404
+        if (repoRepository.deleteByIdAndUserId(repoId, userId) == 0) {
+            throw ApiException.notFound("Repository not found");
+        }
     }
 
     private RepoDto mapToDto(Repo repo) {
