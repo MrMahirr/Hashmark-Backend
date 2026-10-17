@@ -60,6 +60,9 @@ public class RepoWebhookService {
         } catch (RuntimeException e) {
             if (repo.getWebhookId() == null) {
                 repoRepository.clearWebhook(repoId, userId);
+            } else {
+                // Anahtar yenileme başarısız: GitHub hâlâ eski anahtarla imzalıyor, teslimatlar kesilmesin
+                repoRepository.updateWebhookSecret(repoId, userId, repo.getWebhookSecret());
             }
             throw e;
         }
