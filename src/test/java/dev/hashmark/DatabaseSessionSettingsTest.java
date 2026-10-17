@@ -163,5 +163,7 @@ class DatabaseSessionSettingsTest {
         double size = registry.get("hashmark.db.table.size.bytes").tag("table", "debts").gauge().value();
         assertTrue(size > 0, "debts tablo boyutu okunmalı");
         assertEquals(0.0, registry.get("hashmark.db.table.dead.rows").tag("table", "users").gauge().value());
+        // Bu test süper kullanıcıyla bağlanır: RLS atlanır ve metrik bunu dürüstçe 0 gösterir
+        assertEquals(0.0, registry.get("hashmark.db.rls.enforced").gauge().value());
     }
 }

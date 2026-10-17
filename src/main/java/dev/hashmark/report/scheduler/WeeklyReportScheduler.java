@@ -1,5 +1,6 @@
 package dev.hashmark.report.scheduler;
 
+import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.auth.model.User;
 import dev.hashmark.report.service.EmailService;
 import dev.hashmark.settings.model.UserSettings;
@@ -47,15 +48,18 @@ public class WeeklyReportScheduler {
             log.info("Weekly reports skipped: email provider is not configured");
             return;
         }
+        // Alıcı listesi kullanıcılar arası (sistem); her rapor yalnızca o kullanıcının kapsamında üretilir (RLS, V11)
         List<UserSettingsRepository.DigestRecipient> recipients =
-                userSettingsRepository.findDigestRecipients(day.name(), today);
+                TenantContext.asSystem(() -> userSettingsRepository.findDigestRecipients(day.name(), today));
         for (UserSettingsRepository.DigestRecipient recipient : recipients) {
             User user = recipient.user();
             UserSettings settings = recipient.settings();
             try {
-                if (emailService.sendWeeklyReport(user, settings)) {
-                    userSettingsRepository.markDigestSent(user.getId(), today);
-                }
+                TenantContext.asUser(user.getId(), () -> {
+                    if (emailService.sendWeeklyReport(user, settings)) {
+                        userSettingsRepository.markDigestSent(user.getId(), today);
+                    }
+                });
             } catch (Exception e) {
                 log.error("Failed to send weekly report. userId={}", user.getId(), e);
             }

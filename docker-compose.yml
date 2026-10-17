@@ -101,10 +101,13 @@ services:
     environment:
       - SERVER_PORT=8080
       - DATABASE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-hashmark}
-      - DATABASE_USERNAME=${POSTGRES_USER:-hashmark}
-      - DATABASE_PASSWORD=${POSTGRES_PASSWORD}
+      # Uygulama rolü: DB_APP_USER verilince ayrı, tablo sahibi olmayan rol → RLS etkin (scripts/create-app-role.sh).
+      # Boşsa sahip rol kullanılır ve RLS politikaları atlanır (hashmark_db_rls_enforced = 0).
+      - DATABASE_USERNAME=${DB_APP_USER:-${POSTGRES_USER:-hashmark}}
+      - DATABASE_PASSWORD=${DB_APP_PASSWORD:-${POSTGRES_PASSWORD}}
       - DB_STATEMENT_TIMEOUT=${DB_STATEMENT_TIMEOUT:-30s}
       - DB_LOCK_TIMEOUT=${DB_LOCK_TIMEOUT:-10s}
+      # Migrasyonlar her zaman sahip rolle
       - FLYWAY_USER=${FLYWAY_USER:-${POSTGRES_USER:-hashmark}}
       - FLYWAY_PASSWORD=${FLYWAY_PASSWORD:-${POSTGRES_PASSWORD}}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}

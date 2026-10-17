@@ -1,5 +1,6 @@
 package dev.hashmark.stats.controller;
 
+import dev.hashmark.common.tenant.TenantContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,6 +26,11 @@ public class PublicStatsController {
     @GetMapping("/stats")
     @Operation(summary = "Landing sayaclari: izlenen isaret ve tarama yapilan depo sayisi")
     public PublicStats stats() {
+        // Herkese açık toplam sayaçlar kullanıcılar arasıdır; yalnızca sayı döner, satır değil (RLS, V11)
+        return TenantContext.asSystem(this::count);
+    }
+
+    private PublicStats count() {
         Long markers = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM debts d JOIN repos r ON r.id = d.repo_id WHERE r.tracked AND d.resolved_at IS NULL",
                 Long.class);

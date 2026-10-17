@@ -48,8 +48,17 @@ public class DatabaseHealthMetrics implements MeterBinder {
         this.clock = clock;
     }
 
+    /** RLS uygulama rolü için etkin mi: süper kullanıcı/BYPASSRLS değil ve tablo sahibi değil (V11). */
+    private volatile Boolean rlsEnforced;
+
     @Override
     public void bindTo(MeterRegistry registry) {
+        Gauge.builder("hashmark.db.rls.enforced", () -> {
+                    Boolean enforced = rlsEnforced();
+                    return enforced == null ? Double.NaN : (enforced ? 1.0 : 0.0);
+                })
+                .description("1: uygulama rolü RLS'e tabi (ayrı, sahip olmayan rol); 0: politika atlanıyor")
+                .register(registry);
         for (String table : TABLES) {
             gauge(registry, "hashmark.db.table.live.rows", "Tablodaki canlı satır (tahmini)", table, TableStats::liveRows);
             gauge(registry, "hashmark.db.table.dead.rows", "Vakum bekleyen ölü satır", table, TableStats::deadRows);
@@ -68,6 +77,25 @@ public class DatabaseHealthMetrics implements MeterBinder {
                 .description(description)
                 .tag("table", table)
                 .register(registry);
+    }
+
+    /** Rol çalışırken değişmez; bir kez başarıyla okunduktan sonra önbellekte kalır. */
+    public Boolean rlsEnforced() {
+        Boolean cached = rlsEnforced;
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            cached = jdbc.queryForObject(
+                    "SELECT NOT (r.rolsuper OR r.rolbypassrls) AND c.relowner <> r.oid " +
+                    "FROM pg_roles r, pg_class c WHERE r.rolname = current_user AND c.oid = to_regclass('debts')",
+                    Boolean.class);
+            rlsEnforced = cached;
+            return cached;
+        } catch (Exception e) {
+            log.warn("RLS durumu okunamadı: {}", e.getClass().getSimpleName());
+            return null;
+        }
     }
 
     Map<String, TableStats> stats() {

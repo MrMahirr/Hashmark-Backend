@@ -306,7 +306,8 @@ docker compose up -d --build
 
 Flyway migration'ları backend başladığında **otomatik** çalışır. Yeni migrasyon yazmadan önce
 kurallar (expand → migrate → contract, `CONCURRENTLY`, kilit zaman aşımı, geri alma): `docs/MIGRATIONS.md`.
-Postgres ayarları ve vakum izleme: `docs/POSTGRES_TUNING.md`.
+Postgres ayarları ve vakum izleme: `docs/POSTGRES_TUNING.md`. Satır güvenliğini (RLS) etkinleştirme —
+ayrı uygulama rolü: `docs/ROW_LEVEL_SECURITY.md`. Anahtar dönüşü: `docs/KEY_ROTATION.md`.
 
 ```bash
 # Migration durumunu kontrol et

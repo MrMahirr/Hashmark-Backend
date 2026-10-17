@@ -1,5 +1,6 @@
 package dev.hashmark.common.retention;
 
+import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.common.metrics.AppMetrics;
 import dev.hashmark.notification.repository.NotificationRepository;
 import dev.hashmark.scanner.repository.ScanJobRepository;
@@ -45,6 +46,11 @@ public class DataRetentionJob {
         if (!props.isEnabled()) {
             return;
         }
+        // Saklama kullanıcılar arasıdır (RLS, V11)
+        TenantContext.asSystem(this::apply);
+    }
+
+    private void apply() {
         try {
             int jobs = inBatches(() -> scanJobs.deleteFinishedOlderThan(props.getScanJobsDays(), props.getBatchSize()));
             int compacted = snapshots.compactToWeekly(props.getSnapshotsDetailDays());
