@@ -12,7 +12,11 @@ import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.report.dto.TrendDataPoint;
 import dev.hashmark.report.repository.ReportRepository;
+import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.scanner.job.ScanResultWriter;
 import dev.hashmark.scanner.model.ScanJob;
+import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.repository.ScanSnapshotRepository;
 import org.flywaydb.core.Flyway;
@@ -59,6 +63,7 @@ class DatabaseIntegrationTest {
     private ScanJobRepository jobs;
     private ReportRepository reports;
     private ScanSnapshotRepository snapshots;
+    private ScanResultWriter writer;
 
     private long userId;
     private long repoId;
@@ -80,6 +85,8 @@ class DatabaseIntegrationTest {
         jobs = new ScanJobRepository(jdbc);
         reports = new ReportRepository(jdbc);
         snapshots = new ScanSnapshotRepository(jdbc);
+        writer = new ScanResultWriter(new DataSourceTransactionManager(dataSource), jobs, debts,
+                new RepoRepository(jdbc), snapshots);
     }
 
     @AfterEach
@@ -408,6 +415,88 @@ class DatabaseIntegrationTest {
         assertEquals("f".repeat(40), done.getCommitSha());
         assertEquals(10, done.getFilesScanned());
         jobs.enqueue(repoId, userId, null);
+    }
+
+    private ScanResult result(String sha) {
+        return new ScanResult(1, 0, 0, Set.of(), Set.of(), false, null, sha);
+    }
+
+    @Test
+    void scanResultIsWrittenAtomically() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        jobs.claimPending(1);
+
+        var replaced = writer.write(job.getId(), repoId, List.of(debt("A.java", 1, "TODO", "x")),
+                result("a".repeat(40)), null);
+
+        assertTrue(replaced.isPresent());
+        assertEquals("DONE", jobs.findById(job.getId()).orElseThrow().getStatus());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM debts WHERE repo_id = ?", Integer.class, repoId));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()));
+        assertEquals("a".repeat(40), jdbc.queryForObject("SELECT last_scanned_sha FROM repos WHERE id = ?",
+                String.class, repoId));
+    }
+
+    @Test
+    void scanResultWriteIsSkippedWhenJobIsNoLongerRunning() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        jobs.claimPending(1);
+        assertTrue(writer.write(job.getId(), repoId, List.of(debt("A.java", 1, "TODO", "x")),
+                result("a".repeat(40)), null).isPresent());
+
+        // geç kalan ikinci çalıştırma: iş zaten DONE → hiçbir şey yazılmaz, snapshot çoğalmaz
+        var second = writer.write(job.getId(), repoId, List.of(debt("B.java", 1, "FIXME", "y")),
+                result("b".repeat(40)), null);
+
+        assertTrue(second.isEmpty());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM debts WHERE repo_id = ?", Integer.class, repoId));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()));
+        assertEquals("a".repeat(40), jdbc.queryForObject("SELECT commit_sha FROM scan_jobs WHERE id = ?",
+                String.class, job.getId()));
+    }
+
+    @Test
+    void scanResultRollsBackEverythingWhenALaterStepFails() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        jobs.claimPending(1);
+        // snapshot adımını düşürmek için tabloyu kaldır
+        jdbc.execute("DROP TABLE scan_snapshots CASCADE");
+
+        assertThrows(RuntimeException.class, () -> writer.write(job.getId(), repoId,
+                List.of(debt("A.java", 1, "TODO", "x")), result("a".repeat(40)), null));
+
+        assertEquals("RUNNING", jobs.findById(job.getId()).orElseThrow().getStatus(), "iş kapatılmamalı");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM debts WHERE repo_id = ?", Integer.class, repoId),
+                "borçlar geri alınmalı");
+    }
+
+    @Test
+    void snapshotSaveIsIdempotentPerJob() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        snapshots.save(repoId, job.getId(), null, 3, Map.of("TODO", 3), 3, 0);
+        snapshots.save(repoId, job.getId(), null, 5, Map.of("TODO", 5), 2, 0);
+
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()));
+        assertEquals(3, jdbc.queryForObject("SELECT total_open FROM scan_snapshots WHERE scan_job_id = ?",
+                Integer.class, job.getId()), "ilk yazım korunur");
+    }
+
+    @Test
+    void completeOnlyClosesRunningJobs() {
+        migrateAll();
+        ScanJob job = jobs.enqueue(repoId, userId, null);
+        assertFalse(jobs.complete(job.getId(), "DONE", 0, 0, 0, 0, null, null), "PENDING iş kapatılamaz");
+        jobs.claimPending(1);
+        assertTrue(jobs.complete(job.getId(), "DONE", 0, 0, 0, 0, null, null));
+        assertFalse(jobs.complete(job.getId(), "FAILED", 0, 0, 0, 0, null, "late"), "ikinci kapatma yok sayılır");
+        assertEquals("DONE", jobs.findById(job.getId()).orElseThrow().getStatus());
     }
 
     @Test

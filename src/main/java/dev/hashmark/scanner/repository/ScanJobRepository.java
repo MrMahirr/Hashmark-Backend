@@ -94,11 +94,19 @@ public class ScanJobRepository {
         jdbcTemplate.update("UPDATE scan_jobs SET heartbeat_at = NOW() WHERE id = ? AND status = 'RUNNING'", jobId);
     }
 
-    public void complete(Long jobId, String status, int debtFound, int filesScanned, int filesSkipped,
-                         int filesFailed, String commitSha, String message) {
+    /**
+     * İşi bitirir. Yalnızca hâlâ RUNNING olan iş kapatılır: kalp atışı kesilip yeniden kuyruğa alınmış
+     * ya da başka bir çalıştırmayla bitmiş işin sonucunu geç kalan çalıştırma ezemez.
+     *
+     * @return iş gerçekten kapatıldıysa true
+     */
+    public boolean complete(Long jobId, String status, int debtFound, int filesScanned, int filesSkipped,
+                            int filesFailed, String commitSha, String message) {
         String sql = "UPDATE scan_jobs SET status = ?, debt_found = ?, files_scanned = ?, files_skipped = ?, " +
-                     "files_failed = ?, commit_sha = ?, message = ?, finished_at = NOW() WHERE id = ?";
-        jdbcTemplate.update(sql, status, debtFound, filesScanned, filesSkipped, filesFailed, commitSha, message, jobId);
+                     "files_failed = ?, commit_sha = ?, message = ?, finished_at = NOW() " +
+                     "WHERE id = ? AND status = 'RUNNING'";
+        return jdbcTemplate.update(sql, status, debtFound, filesScanned, filesSkipped, filesFailed, commitSha,
+                message, jobId) == 1;
     }
 
     /**

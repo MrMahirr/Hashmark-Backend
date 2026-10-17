@@ -44,7 +44,7 @@ docker network create ${P}-net >/dev/null
 echo "== PostgreSQL (1 CPU / 512 MB, pg_stat_statements açık)"
 docker run -d --name ${P}-pg --network ${P}-net --cpus 1 --memory 512m \
     -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=hashmark -e POSTGRES_USER=hashmark \
-    postgres:16-alpine \
+    postgres:18-alpine \
     -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all \
     -c max_connections=100 >/dev/null
 for _ in $(seq 1 30); do docker exec ${P}-pg pg_isready -U hashmark -d hashmark >/dev/null 2>&1 && break; sleep 1; done

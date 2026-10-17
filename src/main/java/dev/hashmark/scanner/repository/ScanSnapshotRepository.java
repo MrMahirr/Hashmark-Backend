@@ -15,11 +15,13 @@ public class ScanSnapshotRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /** Aynı iş için ikinci çağrı sessizce yok sayılır (idempotent). */
     public void save(Long repoId, Long scanJobId, String commitSha, int totalOpen,
                      Map<String, Integer> labelCounts, int added, int resolved) {
         String sql = "INSERT INTO scan_snapshots (repo_id, scan_job_id, commit_sha, total_open, " +
                      "todo_count, fixme_count, hack_count, xxx_count, note_count, doc_count, info_count, " +
-                     "added, resolved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                     "added, resolved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                     "ON CONFLICT (scan_job_id) WHERE scan_job_id IS NOT NULL DO NOTHING";
         jdbcTemplate.update(sql, repoId, scanJobId, commitSha, totalOpen,
                 labelCounts.getOrDefault("TODO", 0),
                 labelCounts.getOrDefault("FIXME", 0),

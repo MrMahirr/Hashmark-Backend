@@ -341,6 +341,46 @@ gunzip < backups/hashmark_backup_YYYYMMDD_HHMMSS.sql.gz | \
 ```
 Üç ayda bir çalıştırın; süreyi kaydedin (RTO ölçümü).
 
+### PostgreSQL 16 → 18 geçişi (tek seferlik)
+Major sürüm veri dizinini doğrudan açamaz; geçiş **yedek → yeni konteyner → geri yükleme** ile yapılır.
+Compose artık `postgres:18-alpine` ve **yeni** `postgres18_data` volume'unu kullanır; eski PG16 volume'u
+(`<proje>_postgres_data`) silinmez, geri dönüş yolu odur. Kısa bir kesinti olur (veri boyutuna bağlı; yerel provada 0–3 sn geri yükleme).
+
+```bash
+cd /opt/hashmark/hashmark-backend
+# 0) Kodu çekmeden ÖNCE, PG16 hâlâ çalışırken:
+./scripts/backup-db.sh
+POSTGRES_IMAGE=postgres:18-alpine ./scripts/restore-test.sh   # yedek 18'de açılıyor mu (prova)
+
+# 1) Yazımı durdur, son yedeği al
+docker compose stop backend
+./scripts/backup-db.sh
+LATEST=$(ls -1t backups/hashmark_backup_*.sql.gz | head -n1)
+
+# 2) Yeni sürümü çek ve 18'i boş volume ile başlat
+git pull
+docker compose up -d postgres            # eski konteyner yeni imajla yeniden oluşturulur
+docker exec hashmark_postgres psql -U hashmark -d hashmark -tAc "SHOW server_version"   # 18.x
+
+# 3) Geri yükle ve doğrula
+gunzip -c "$LATEST" | docker exec -i hashmark_postgres psql -U hashmark -d hashmark -v ON_ERROR_STOP=1 -q
+docker exec hashmark_postgres psql -U hashmark -d hashmark -tAc \
+  "SELECT max(version::int) FROM flyway_schema_history WHERE success"   # son migrasyon numarası
+docker exec hashmark_postgres psql -U hashmark -d hashmark -c "ANALYZE"  # planlayıcı istatistikleri dump'ta yok
+
+# 4) Backend'i aç
+docker compose up -d --build backend
+```
+
+**Geri dönüş:** `git checkout <önceki commit> -- docker-compose.yml && docker compose up -d postgres`
+→ PG16 eski volume'uyla açılır. Geçişten sonra yazılan veri bu volume'da **yoktur**; gerekirse 18'den alınan
+yedek 16'ya elle yüklenir (pg_dump 18 çıktısındaki yeni `SET` satırları silinmeden hata verebilir).
+Birkaç hafta sorunsuz çalıştıktan sonra eski volume silinebilir: `docker volume rm <proje>_postgres_data`.
+
+**Bilinen uyarı:** Spring Boot 3.3.0 ile gelen Flyway 10.10.0 açılışta *"PostgreSQL 18 is newer than this
+version of Flyway"* uyarısı verir. Migrasyonlar çalışır (176 test PG 18.1'de yeşil); resmi destek Spring Boot
+yükseltmesiyle gelecek Flyway sürümündedir.
+
 ## 15b. İzleme ve alarm
 Prometheus/Alertmanager yığını `monitoring/` altındadır; kurulum ve alarm listesi: `monitoring/README.md`.
 Metrikler **yönetim portundan (8081)** sunulur; bu port nginx'te yayınlanmaz ve host'a açılmaz.

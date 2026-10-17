@@ -9,13 +9,11 @@ import dev.hashmark.common.util.FingerprintUtil;
 import dev.hashmark.debt.dto.DebtDto;
 import dev.hashmark.debt.dto.ReplaceResult;
 import dev.hashmark.debt.model.Debt;
-import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.notification.service.NotificationService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
-import dev.hashmark.scanner.repository.ScanSnapshotRepository;
 import dev.hashmark.scanner.service.BlameEnrichmentService;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
@@ -29,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /** Kuyruktan alınmış tek bir tarama işini çalıştırır. Çağıran {@link ScanJobDispatcher}'dır. */
 @Component
@@ -37,30 +36,28 @@ public class ScanJobProcessor {
     private static final Logger log = LoggerFactory.getLogger(ScanJobProcessor.class);
 
     private final ScanJobRepository scanJobRepository;
-    private final ScanSnapshotRepository scanSnapshotRepository;
+    private final ScanResultWriter scanResultWriter;
     private final GitHubFileService gitHubFileService;
     private final BlameEnrichmentService blameEnrichmentService;
     private final DebtParserService debtParserService;
-    private final DebtRepository debtRepository;
     private final UserRepository userRepository;
     private final RepoRepository repoRepository;
     private final AesEncryptionUtil aesEncryptionUtil;
     private final NotificationService notificationService;
     private final AppMetrics metrics;
 
-    public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanSnapshotRepository scanSnapshotRepository,
+    public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanResultWriter scanResultWriter,
                             GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
-                            DebtParserService debtParserService, DebtRepository debtRepository,
+                            DebtParserService debtParserService,
                             UserRepository userRepository, RepoRepository repoRepository,
                             AesEncryptionUtil aesEncryptionUtil, NotificationService notificationService,
                             AppMetrics metrics) {
         this.metrics = metrics;
         this.scanJobRepository = scanJobRepository;
-        this.scanSnapshotRepository = scanSnapshotRepository;
+        this.scanResultWriter = scanResultWriter;
         this.gitHubFileService = gitHubFileService;
         this.blameEnrichmentService = blameEnrichmentService;
         this.debtParserService = debtParserService;
-        this.debtRepository = debtRepository;
         this.userRepository = userRepository;
         this.repoRepository = repoRepository;
         this.aesEncryptionUtil = aesEncryptionUtil;
@@ -103,24 +100,15 @@ public class ScanJobProcessor {
                     (path, content) -> allDebts.addAll(toDebts(repoId, path, content)),
                     processed -> scanJobRepository.updateProgress(jobId, processed));
 
-            // Kısmi taramada yalnızca gerçekten taranan dosyaların borçları çözülür;
-            // okunamayan veya çok büyük dosyaların borçları ise açık bırakılır.
-            ReplaceResult replaced = debtRepository.replaceForRepo(
-                    repoId,
-                    allDebts,
-                    result.commitSha(),
-                    result.truncated() ? result.scannedPaths() : null,
-                    result.keepOpenPaths());
-
-            scanJobRepository.complete(jobId, "DONE", allDebts.size(), result.scanned(), result.skipped(),
-                    result.failed(), result.commitSha(), buildMessage(result));
-            repoRepository.updateLastScannedAt(repoId, LocalDateTime.now());
-            if (result.commitSha() != null) {
-                repoRepository.updateLastScannedSha(repoId, result.commitSha());
+            // İş kapatma + borçlar + repo damgaları + snapshot tek transaction'da yazılır
+            Optional<ReplaceResult> replaced = scanResultWriter.write(jobId, repoId, allDebts, result,
+                    buildMessage(result));
+            if (replaced.isEmpty()) {
+                log.warn("Scan job {} is no longer running; result discarded", jobId);
+                return false;
             }
 
-            saveSnapshot(repoId, jobId, result.commitSha(), replaced);
-            notifyScanDone(userId, repo.getFullName(), replaced);
+            notifyScanDone(userId, repo.getFullName(), replaced.get());
             enrichBlame(repoId, repo.getFullName(), plainToken, result.commitSha());
             return true;
 
@@ -181,15 +169,6 @@ public class ScanJobProcessor {
                     .build());
         }
         return debts;
-    }
-
-    private void saveSnapshot(Long repoId, Long jobId, String sha, ReplaceResult replaced) {
-        try {
-            scanSnapshotRepository.save(repoId, jobId, sha, replaced.openTotal(), replaced.openByLabel(),
-                    replaced.added(), replaced.resolved());
-        } catch (Exception e) {
-            log.warn("Could not save scan snapshot for repo {}", repoId, e);
-        }
     }
 
     private void enrichBlame(Long repoId, String fullName, String token, String sha) {

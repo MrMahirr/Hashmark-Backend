@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_FILE="${1:-$(ls -1t "$BACKEND_DIR"/backups/hashmark_backup_*.sql.gz 2>/dev/null | head -n1 || true)}"
-IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+IMAGE="${POSTGRES_IMAGE:-postgres:18-alpine}"
 NAME="hashmark_restore_test_$$"
 export MSYS_NO_PATHCONV=1
 
