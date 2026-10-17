@@ -31,6 +31,11 @@ public class AsyncConfig {
         executor.setThreadNamePrefix("hashmark-async-");
         // Bilinçli seçim: kuyruk dolunca çağıranı bloklamak (CallerRunsPolicy) yerine reddet.
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        // Kapanış: varsayılan davranış ContextClosedEvent'te çalışan taramaları HEMEN keser (erken kapanış).
+        // Bunun yerine ScanJobDispatcher.stop() önce bekler, bitmeyenleri jetonla kuyruğa geri bırakır ve keser;
+        // executor en son, kısa bir beklemeyle kapanır.
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(5);
         executor.initialize();
         return executor;
     }

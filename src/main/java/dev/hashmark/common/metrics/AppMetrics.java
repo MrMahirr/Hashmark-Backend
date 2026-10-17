@@ -80,6 +80,33 @@ public class AppMetrics {
                 .increment(count);
     }
 
+    /** Geçici hata nedeniyle FAILED yerine ertelenen tarama işleri. */
+    public void scanDeferred() {
+        Counter.builder("hashmark.scan.deferred")
+                .description("Geçici hata (GitHub kesintisi, rate-limit) nedeniyle ertelenen tarama işleri")
+                .register(registry)
+                .increment();
+    }
+
+    /** kind: "active", "daily", "repos", "repo_size" veya "queue_full". */
+    public void scanQuotaRejected(String kind) {
+        Counter.builder("hashmark.scan.quota.rejected")
+                .description("Kullanıcı kotası ya da kuyruk üst sınırı nedeniyle reddedilen tarama/takip istekleri")
+                .tag("kind", kind)
+                .register(registry)
+                .increment();
+    }
+
+    /** cls: yük atılan istek sınıfı ("expensive"). reason: "db_pool", "inflight". */
+    public void loadShed(String cls, String reason) {
+        Counter.builder("hashmark.loadshed.rejected")
+                .description("Aşırı yükte önceliklendirme nedeniyle 503 dönen istekler")
+                .tag("class", cls)
+                .tag("reason", reason)
+                .register(registry)
+                .increment();
+    }
+
     public void githubRateLimitRemaining(long remaining) {
         githubRateLimitRemaining.set(remaining);
     }

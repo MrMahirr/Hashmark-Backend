@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -26,5 +27,12 @@ public class ScanJob {
     private Integer filesSkipped;
     private Integer filesFailed;
     private String message;
+    /** MANUAL (kullanıcı) | PUSH (webhook) */
+    private String triggeredBy;
     private LocalDateTime createdAt;
+    /** Geçici hatada ertelenen iş bu zamandan önce sahiplenilmez. */
+    private LocalDateTime runAfter;
+    private Integer deferrals;
+    /** Bu sahiplenmeye ait jeton; sonuç/kalp atışı yazımları bununla kapsamlanır (fencing). */
+    private UUID claimToken;
 }

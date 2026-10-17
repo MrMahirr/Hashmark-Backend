@@ -121,6 +121,9 @@ services:
     container_name: hashmark_backend
     logging: *default-logging
     restart: unless-stopped
+    # Düzgün kapanış (Faz 3): taramalar için 15 sn + web istekleri için 20 sn + executor 5 sn. Docker varsayılanı
+    # (10 sn) dolunca SIGKILL gelir ve yarım kalan taramalar ancak 5 dk sonra kalp atışıyla kurtarılırdı.
+    stop_grace_period: 60s
     # Kaynak sınırı: JVM -XX:MaxRAMPercentage=75 bu sınırı görür (OOM-kill yerine kontrollü heap).
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     read_only: true
@@ -161,6 +164,14 @@ services:
       - SWAGGER_ENABLED=${SWAGGER_ENABLED:-false}
       - RATE_LIMIT_AUTH_PER_MINUTE=${RATE_LIMIT_AUTH_PER_MINUTE:-30}
       - RATE_LIMIT_SCAN_PER_MINUTE=${RATE_LIMIT_SCAN_PER_MINUTE:-10}
+      # Faz 3: kotalar, yük atma ve güvenilir proxy (varsayılanlar application.yml'de; burada yalnızca geçirilir)
+      - SCAN_QUOTA_ACTIVE_PER_USER=${SCAN_QUOTA_ACTIVE_PER_USER:-3}
+      - SCAN_QUOTA_PER_DAY=${SCAN_QUOTA_PER_DAY:-50}
+      - SCAN_QUOTA_TRACKED_REPOS=${SCAN_QUOTA_TRACKED_REPOS:-50}
+      - SCAN_MAX_QUEUE_DEPTH=${SCAN_MAX_QUEUE_DEPTH:-500}
+      - LOAD_SHEDDING_ENABLED=${LOAD_SHEDDING_ENABLED:-true}
+      - RATE_LIMIT_WEBHOOK_PER_MINUTE=${RATE_LIMIT_WEBHOOK_PER_MINUTE:-60}
+      - WEBHOOK_PUBLIC_URL=${WEBHOOK_PUBLIC_URL:-}
       - GITHUB_OAUTH_SCOPE=${GITHUB_OAUTH_SCOPE:-repo,user:email}
       - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-15}
       - DB_POOL_MIN_IDLE=${DB_POOL_MIN_IDLE:-5}

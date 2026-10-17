@@ -14,6 +14,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Tarama sonucunu tek bir transaction'da kalıcılaştırır: iş kapatma + borç çözme/ekleme + repo
@@ -48,9 +49,17 @@ public class ScanResultWriter {
      */
     public Optional<ReplaceResult> write(Long jobId, Long repoId, List<Debt> debts, ScanResult result,
                                          String message) {
+        return write(jobId, null, repoId, debts, result, message);
+    }
+
+    /**
+     * @param claimToken bu çalıştırmanın sahiplenme jetonu; iş başkasına devredildiyse hiçbir şey yazılmaz
+     */
+    public Optional<ReplaceResult> write(Long jobId, UUID claimToken, Long repoId, List<Debt> debts,
+                                         ScanResult result, String message) {
         return Optional.ofNullable(tx.execute(status -> {
             // Önce işi sahiplen: başarısızsa bu çalıştırma geç kalmıştır, borçlara dokunma.
-            boolean closed = scanJobRepository.complete(jobId, "DONE", debts.size(), result.scanned(),
+            boolean closed = scanJobRepository.complete(jobId, claimToken, "DONE", debts.size(), result.scanned(),
                     result.skipped(), result.failed(), result.commitSha(), message);
             if (!closed) {
                 return null;

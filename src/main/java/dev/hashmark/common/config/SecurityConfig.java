@@ -1,6 +1,8 @@
 package dev.hashmark.common.config;
 
 import dev.hashmark.common.metrics.AppMetrics;
+import dev.hashmark.common.ratelimit.RateLimitProperties;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,20 +31,28 @@ public class SecurityConfig {
     @Value("${server.port:8080}")
     private int serverPort;
 
-    @Value("${rate-limit.auth-per-minute:30}")
-    private int authPerMinute;
+    @Value("${load-shedding.enabled:true}")
+    private boolean loadSheddingEnabled;
 
-    @Value("${rate-limit.scan-per-minute:10}")
-    private int scanPerMinute;
+    @Value("${load-shedding.db-pending-threshold:1}")
+    private int loadSheddingDbPending;
+
+    @Value("${load-shedding.max-inflight:100}")
+    private int loadSheddingMaxInflight;
 
     private final AppMetrics metrics;
     private final dev.hashmark.consent.ConsentService consentService;
+    private final RateLimitProperties rateLimitProperties;
+    private final MeterRegistry meterRegistry;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, AppMetrics metrics,
-                          dev.hashmark.consent.ConsentService consentService) {
+                          dev.hashmark.consent.ConsentService consentService, RateLimitProperties rateLimitProperties,
+                          MeterRegistry meterRegistry) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.metrics = metrics;
         this.consentService = consentService;
+        this.rateLimitProperties = rateLimitProperties;
+        this.meterRegistry = meterRegistry;
     }
 
     @Bean
@@ -69,6 +79,8 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> {
                 auth.requestMatchers("/auth/**", "/public/**").permitAll();
+                // GitHub teslimatları kimliksizdir; GitHubWebhookService her isteği depo anahtarıyla (HMAC) doğrular
+                auth.requestMatchers(org.springframework.http.HttpMethod.POST, "/webhooks/github/*").permitAll();
                 // Ayrı yönetim portundaki actuator istekleri kimliksiz; ana porttaki /actuator/** ise kapalıdır.
                 if (managementPort > 0 && managementPort != serverPort) {
                     auth.requestMatchers(request -> request.getLocalPort() == managementPort
@@ -84,9 +96,12 @@ public class SecurityConfig {
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             // JWT filtresinden sonra: kullanıcı kimliği biliniyorsa kullanıcı bazlı sınırlar uygulanır.
-            .addFilterAfter(new RateLimitFilter(authPerMinute, scanPerMinute, metrics), JwtAuthenticationFilter.class)
+            .addFilterAfter(new RateLimitFilter(rateLimitProperties, metrics), JwtAuthenticationFilter.class)
+            // Yük atma (Faz 3): hız sınırından sonra; baskı altında yalnızca pahalı uçlar 503 alır
+            .addFilterAfter(new LoadSheddingFilter(loadSheddingEnabled, loadSheddingDbPending, loadSheddingMaxInflight,
+                    meterRegistry, metrics), RateLimitFilter.class)
             // Onay kapısı (plan 5.10): kimlik bilindikten sonra, controller'lardan önce
-            .addFilterAfter(new dev.hashmark.consent.ConsentGateFilter(consentService), RateLimitFilter.class);
+            .addFilterAfter(new dev.hashmark.consent.ConsentGateFilter(consentService), LoadSheddingFilter.class);
 
         return http.build();
     }

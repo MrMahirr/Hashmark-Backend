@@ -4,7 +4,10 @@ set -euo pipefail
 # ============================================================
 # Hashmark yük testi koşucusu (yerel Docker, ASLA üretimde değil)
 # ============================================================
-# Kullanım: ./loadtest/run.sh login|dashboard|scan|explain
+# Kullanım: ./loadtest/run.sh login|dashboard|scan|outage|shed|explain
+#   outage: GitHub 20–80 sn arası yanıt vermez; giriş hızlı hata vermeli, okumalar etkilenmemeli (devre kesici)
+#   shed  : dashboard + sürekli export; küçük havuzla ölçmek için EXTRA_ENV="DB_POOL_MAX_SIZE=5 DB_POOL_MIN_IDLE=2"
+# k6 tek IP'den gelir: Faz 3 hız sınırı matrisinin IP/kullanıcı/hesap tabanları burada kapatılır.
 #
 # Küçük bir VDS'i (2 vCPU / 2 GB) CPU/bellek sınırlarıyla taklit eder:
 #   backend 1 CPU + 1 GB, postgres 1 CPU + 512 MB. k6 ve sahte GitHub sınırsızdır (istemci darboğaz olmasın).
@@ -12,7 +15,7 @@ set -euo pipefail
 # Docker ortamını yansıtır; kapasite iddiası için üretimle aynı donanımda tekrar edin.
 # ============================================================
 
-SCENARIO="${1:?Kullanım: run.sh login|dashboard|scan}"
+SCENARIO="${1:?Kullanım: run.sh login|dashboard|scan|outage|shed}"
 DURATION="${DURATION:-60s}"
 BACKEND_CPUS="${BACKEND_CPUS:-1}"
 WARMUP="${WARMUP:-0}"     # sn: ölçümden önce aynı senaryoyu ısınma için çalıştırır (JIT ısınması hariç tutulur)
@@ -72,6 +75,9 @@ start_backend() {
         -e ENCRYPTION_SECRET=0123456789abcdef0123456789abcdef -e CORS_ALLOWED_ORIGINS=http://localhost:3000 \
         -e GITHUB_OAUTH_URL=http://${P}-mock:9000 -e GITHUB_API_URL=http://${P}-mock:9000 \
         -e RATE_LIMIT_AUTH_PER_MINUTE=1000000 -e RATE_LIMIT_SCAN_PER_MINUTE=1000000 \
+        -e RATE_LIMIT_USER_PER_MINUTE=0 -e RATE_LIMIT_IP_PER_MINUTE=0 -e RATE_LIMIT_PUBLIC_PER_MINUTE=0 \
+        -e RATE_LIMIT_EXPORT_PER_MINUTE=0 -e RATE_LIMIT_CONTEXT_PER_MINUTE=0 -e RATE_LIMIT_SYNC_PER_MINUTE=0 \
+        -e RATE_LIMIT_REFRESH_PER_ACCOUNT=0 -e RATE_LIMIT_LOGIN_PER_ACCOUNT=0 \
         -e SCAN_MAX_CONCURRENT=0 -e "JAVA_TOOL_OPTIONS=$JTO" "${JFR_ARGS[@]}" "${EXTRA_ARGS[@]}" \
         ${P}-backend >/dev/null
     for _ in $(seq 1 40); do
@@ -131,7 +137,7 @@ fi
 
 echo "== Metrik ve sorgu anlık görüntüleri"
 docker exec ${P}-app curl -s localhost:8081/actuator/prometheus > "$OUT/prometheus.txt"
-grep -E '^(hikaricp_connections_(max|active|pending|timeout_total|acquire_seconds_max)|hashmark_scan_queue_pending|hashmark_scan_queue_oldest|process_cpu_usage|jvm_memory_used_bytes\{.*area="heap")' "$OUT/prometheus.txt" > "$OUT/prometheus-summary.txt" || true
+grep -E '^(hikaricp_connections_(max|active|pending|timeout_total|acquire_seconds_max)|resilience4j_circuitbreaker_(state|not_permitted_calls_total)|resilience4j_bulkhead_available|hashmark_github_rejected_total|hashmark_loadshed_rejected_total|hashmark_http_inflight|hashmark_scan_queue_pending|hashmark_scan_queue_oldest|process_cpu_usage|jvm_memory_used_bytes\{.*area="heap")' "$OUT/prometheus.txt" > "$OUT/prometheus-summary.txt" || true
 docker exec ${P}-pg psql -U hashmark -d hashmark -x -c \
     "SELECT calls, round(total_exec_time::numeric,1) AS total_ms, round(mean_exec_time::numeric,2) AS mean_ms, rows, left(query,160) AS query
        FROM pg_stat_statements WHERE query NOT ILIKE '%pg_stat_statements%' ORDER BY total_exec_time DESC LIMIT 10" > "$OUT/top-queries-by-total.txt"

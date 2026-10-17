@@ -13,11 +13,15 @@ import dev.hashmark.debt.model.Debt;
 import dev.hashmark.notification.service.NotificationService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.scanner.config.RepoScanConfig;
+import dev.hashmark.scanner.config.ScanProperties;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.repository.ScanJobRepository;
 import dev.hashmark.scanner.service.BlameEnrichmentService;
 import dev.hashmark.scanner.service.DebtParserService;
 import dev.hashmark.scanner.service.GitHubFileService;
+import dev.hashmark.scanner.service.LabelRules;
+import dev.hashmark.scanner.service.ScanService;
 import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,12 +33,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /** Kuyruktan alınmış tek bir tarama işini çalıştırır. Çağıran {@link ScanJobDispatcher}'dır. */
 @Component
 public class ScanJobProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ScanJobProcessor.class);
+    private static final int MAX_CONFIG_WARNINGS = 3;
 
     private final ScanJobRepository scanJobRepository;
     private final ScanResultWriter scanResultWriter;
@@ -47,13 +54,18 @@ public class ScanJobProcessor {
     private final NotificationService notificationService;
     private final AppMetrics metrics;
     private final ConsentService consentService;
+    private final ScanProperties scanProperties;
+    private final ScanService scanService;
 
     public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanResultWriter scanResultWriter,
                             GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
                             DebtParserService debtParserService,
                             UserRepository userRepository, RepoRepository repoRepository,
                             AesEncryptionUtil aesEncryptionUtil, NotificationService notificationService,
-                            AppMetrics metrics, ConsentService consentService) {
+                            AppMetrics metrics, ConsentService consentService, ScanProperties scanProperties,
+                            ScanService scanService) {
+        this.scanProperties = scanProperties;
+        this.scanService = scanService;
         this.metrics = metrics;
         this.consentService = consentService;
         this.scanJobRepository = scanJobRepository;
@@ -75,6 +87,27 @@ public class ScanJobProcessor {
         } finally {
             metrics.scanFinished(result, java.time.Duration.ofNanos(System.nanoTime() - startNanos));
         }
+        requeueIfRequested(job);
+    }
+
+    /** Tarama sürerken push geldiyse ({@code repos.rescan_requested}) en son commit için yeni iş açar. */
+    private void requeueIfRequested(ScanJob job) {
+        if (job.getUserId() == null) {
+            return;
+        }
+        try {
+            if (!repoRepository.consumeRescanRequest(job.getRepoId())) {
+                return;
+            }
+            repoRepository.findByIdAndUserId(job.getRepoId(), job.getUserId())
+                    .filter(repo -> Boolean.TRUE.equals(repo.getTracked()))
+                    .ifPresent(repo -> {
+                        ScanService.AutoScanResult queued = scanService.enqueueAutomatic(repo);
+                        log.info("Re-scan after push for repo {}: {}", repo.getId(), queued.outcome());
+                    });
+        } catch (Exception e) {
+            log.warn("Could not queue requested re-scan for repo {}", job.getRepoId(), e);
+        }
     }
 
     /** @return iş başarıyla tamamlandıysa true */
@@ -82,6 +115,7 @@ public class ScanJobProcessor {
         Long jobId = job.getId();
         Long repoId = job.getRepoId();
         Long userId = job.getUserId();
+        UUID token = job.getClaimToken();
 
         try {
             if (userId == null) {
@@ -99,16 +133,19 @@ public class ScanJobProcessor {
 
             List<Debt> allDebts = new ArrayList<>();
 
+            RepoScanConfig config = gitHubFileService.fetchRepoConfig(repo.getFullName(), plainToken, job.getBranch());
+            LabelRules rules = LabelRules.of(config);
             ScanResult result = gitHubFileService.scanRepository(
                     repo.getFullName(),
                     plainToken,
                     job.getBranch(),
-                    (path, content) -> allDebts.addAll(toDebts(repoId, path, content)),
-                    processed -> scanJobRepository.updateProgress(jobId, processed));
+                    config,
+                    (path, content) -> allDebts.addAll(toDebts(repoId, path, content, rules)),
+                    processed -> scanJobRepository.updateProgress(jobId, token, processed));
 
             // İş kapatma + borçlar + repo damgaları + snapshot tek transaction'da yazılır
-            Optional<ReplaceResult> replaced = scanResultWriter.write(jobId, repoId, allDebts, result,
-                    buildMessage(result));
+            Optional<ReplaceResult> replaced = scanResultWriter.write(jobId, token, repoId, allDebts, result,
+                    buildMessage(result, config));
             if (replaced.isEmpty()) {
                 log.warn("Scan job {} is no longer running; result discarded", jobId);
                 return false;
@@ -119,16 +156,44 @@ public class ScanJobProcessor {
             return true;
 
         } catch (ApiException e) {
+            if (e.isTransient() && deferrable(job)) {
+                long delay = deferDelaySeconds(job, e.getRetryAfterSeconds());
+                if (scanJobRepository.defer(jobId, token, delay, "Retrying in " + delay + "s: " + e.getMessage())) {
+                    log.info("Scan job {} deferred for {}s ({})", jobId, delay, e.getMessage());
+                    metrics.scanDeferred();
+                }
+                return false;
+            }
             log.warn("Scan failed for repo {}: {}", repoId, e.getMessage());
-            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, e.getMessage());
-            notifyQuietly(userId, "Scan failed", e.getMessage(), "ERROR");
+            // Jetonla kapatılır: iş bu arada devredildiyse (kapanış, kalp atışı) kullanıcıya yanlış hata bildirilmez
+            if (scanJobRepository.complete(jobId, token, "FAILED", 0, 0, 0, 0, null, e.getMessage())) {
+                notifyQuietly(userId, "Scan failed", e.getMessage(), "ERROR");
+            }
             return false;
         } catch (Exception e) {
             log.error("Scan failed for repo: " + repoId, e);
-            scanJobRepository.complete(jobId, "FAILED", 0, 0, 0, 0, null, "Unexpected error while scanning");
-            notifyQuietly(userId, "Scan failed", "Unexpected error while scanning", "ERROR");
+            if (scanJobRepository.complete(jobId, token, "FAILED", 0, 0, 0, 0, null, "Unexpected error while scanning")) {
+                notifyQuietly(userId, "Scan failed", "Unexpected error while scanning", "ERROR");
+            }
             return false;
         }
+    }
+
+    private boolean deferrable(ScanJob job) {
+        int deferrals = job.getDeferrals() == null ? 0 : job.getDeferrals();
+        return deferrals < scanProperties.getMaxDeferrals();
+    }
+
+    /**
+     * Üstel geri çekilme (taban × 2^erteleme, üst sınırlı) + %0–25 jitter; GitHub'ın önerdiği bekleme
+     * (Retry-After / rate-limit sıfırlanması) daha uzunsa o kullanılır.
+     */
+    long deferDelaySeconds(ScanJob job, Long retryAfterSeconds) {
+        int deferrals = job.getDeferrals() == null ? 0 : job.getDeferrals();
+        long backoff = Math.min(scanProperties.getDeferMaxSeconds(),
+                scanProperties.getDeferBaseSeconds() << Math.min(deferrals, 20));
+        long delay = Math.max(backoff, retryAfterSeconds == null ? 0 : retryAfterSeconds);
+        return delay + ThreadLocalRandom.current().nextLong(delay / 4 + 1);
     }
 
     private void notifyScanDone(Long userId, String repoName, ReplaceResult replaced) {
@@ -154,10 +219,10 @@ public class ScanJobProcessor {
     }
 
     /** Dosyadaki yorumları ayrıştırır; aynı (etiket+içerik) tekrarlarına sıra numarası verir. */
-    List<Debt> toDebts(Long repoId, String path, String content) {
+    List<Debt> toDebts(Long repoId, String path, String content, LabelRules rules) {
         List<Debt> debts = new ArrayList<>();
         Map<String, Integer> seen = new HashMap<>();
-        for (DebtDto dto : debtParserService.parse(content, path)) {
+        for (DebtDto dto : debtParserService.parse(content, path, rules)) {
             String fingerprint = FingerprintUtil.fingerprint(dto.getLabel(), dto.getContent());
             int occurrence = seen.merge(fingerprint, 1, Integer::sum) - 1;
             debts.add(Debt.builder()
@@ -188,13 +253,19 @@ public class ScanJobProcessor {
         }
     }
 
-    private String buildMessage(ScanResult result) {
+    static String buildMessage(ScanResult result, RepoScanConfig config) {
         List<String> parts = new ArrayList<>();
         if (result.truncated()) {
             parts.add("Partial scan: " + result.truncationReason());
         }
         if (result.failed() > 0) {
             parts.add(result.failed() + " file(s) could not be processed");
+        }
+        List<String> warnings = config.warnings();
+        if (!warnings.isEmpty()) {
+            List<String> shown = warnings.subList(0, Math.min(MAX_CONFIG_WARNINGS, warnings.size()));
+            String more = warnings.size() > shown.size() ? " (+" + (warnings.size() - shown.size()) + " more)" : "";
+            parts.add(RepoScanConfig.FILE_NAME + ": " + String.join(", ", shown) + more);
         }
         return parts.isEmpty() ? null : String.join("; ", parts);
     }

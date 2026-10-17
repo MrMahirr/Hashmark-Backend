@@ -8,10 +8,13 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -100,8 +103,72 @@ class ScanJobDispatcherTest {
 
         dispatcher.tick();
 
-        verify(repository).release(7L);
+        verify(repository).release(7L, null);
         assertEquals(0, dispatcher.inFlight());
+    }
+
+    @Test
+    void stopReleasesUnfinishedJobsWithTheirTokenAndStopsClaiming() {
+        properties.setShutdownGraceSeconds(0);
+        ScanJobDispatcher dispatcher = new ScanJobDispatcher(repository, processor, properties, manualExecutor);
+        UUID token = UUID.randomUUID();
+        ScanJob running = job(3);
+        running.setClaimToken(token);
+        when(repository.claimPending(2)).thenReturn(List.of(running));
+        when(repository.release(3L, token)).thenReturn(true);
+        dispatcher.start();
+        dispatcher.tick(); // iş executor'a verildi ama bitmedi
+
+        dispatcher.stop();
+
+        verify(repository).release(3L, token);
+        assertFalse(dispatcher.isRunning());
+        dispatcher.tick();
+        verify(repository).claimPending(2); // kapanıştan sonra yeni iş alınmaz
+    }
+
+    @Test
+    void stopWaitsForRunningJobsWithinGrace() throws Exception {
+        properties.setShutdownGraceSeconds(5);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            ScanJobDispatcher dispatcher = new ScanJobDispatcher(repository, processor, properties, pool);
+            when(repository.claimPending(2)).thenReturn(List.of(job(4)));
+            org.mockito.Mockito.doAnswer(inv -> {
+                Thread.sleep(300);
+                return null;
+            }).when(processor).process(any());
+            dispatcher.tick();
+
+            long start = System.nanoTime();
+            dispatcher.stop();
+            long ms = (System.nanoTime() - start) / 1_000_000;
+
+            assertEquals(0, dispatcher.inFlight(), "iş bitene kadar beklenmeli");
+            assertTrue(ms < 4_000, "iş bitince hemen dönmeli: " + ms);
+            verify(repository, never()).release(org.mockito.ArgumentMatchers.eq(4L), any());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void jobClaimedDuringShutdownIsReleasedImmediately() {
+        ScanJobDispatcher dispatcher = new ScanJobDispatcher(repository, processor, properties, manualExecutor);
+        UUID token = UUID.randomUUID();
+        ScanJob late = job(9);
+        late.setClaimToken(token);
+        // stop() tick'in kontrolünden sonra ama sahiplenme sırasında çağrılmış gibi
+        when(repository.claimPending(2)).thenAnswer(inv -> {
+            properties.setShutdownGraceSeconds(0);
+            dispatcher.stop();
+            return List.of(late);
+        });
+
+        dispatcher.tick();
+
+        verify(repository).release(9L, token);
+        assertTrue(queued.isEmpty(), "çalıştırılmamalı");
     }
 
     @Test

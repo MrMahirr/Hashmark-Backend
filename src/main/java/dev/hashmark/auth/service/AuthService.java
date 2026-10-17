@@ -12,6 +12,8 @@ import dev.hashmark.common.util.AesEncryptionUtil;
 import dev.hashmark.common.util.JwtUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import dev.hashmark.common.ratelimit.AccountRateLimiter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -38,6 +40,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokens;
     private final OAuthStateRepository oauthStates;
     private final AppMetrics metrics;
+    private final AccountRateLimiter accountLimiter;
 
     @Value("${jwt.access-token-expiry}")
     private long accessTokenExpiry;
@@ -45,6 +48,15 @@ public class AuthService {
     public AuthService(GitHubOAuthService gitHubOAuthService, UserRepository userRepository, JwtUtil jwtUtil,
                        AesEncryptionUtil aesEncryptionUtil, RefreshTokenRepository refreshTokens,
                        OAuthStateRepository oauthStates, AppMetrics metrics) {
+        this(gitHubOAuthService, userRepository, jwtUtil, aesEncryptionUtil, refreshTokens, oauthStates, metrics,
+                AccountRateLimiter.disabled(metrics));
+    }
+
+    @Autowired
+    public AuthService(GitHubOAuthService gitHubOAuthService, UserRepository userRepository, JwtUtil jwtUtil,
+                       AesEncryptionUtil aesEncryptionUtil, RefreshTokenRepository refreshTokens,
+                       OAuthStateRepository oauthStates, AppMetrics metrics, AccountRateLimiter accountLimiter) {
+        this.accountLimiter = accountLimiter;
         this.metrics = metrics;
         this.gitHubOAuthService = gitHubOAuthService;
         this.userRepository = userRepository;
@@ -68,6 +80,8 @@ public class AuthService {
 
         String githubToken = gitHubOAuthService.exchangeCodeForToken(code);
         GitHubUserDto userDto = gitHubOAuthService.fetchUserInfo(githubToken);
+        // Hesap başına oturum açma sınırı (IP değiştiren otomasyon aynı hesaba sınırsız oturum açamaz)
+        accountLimiter.checkLogin(userDto.getId());
 
         String encryptedToken = aesEncryptionUtil.encrypt(githubToken);
 
@@ -99,6 +113,8 @@ public class AuthService {
     public LoginResponse refresh(String refreshToken) {
         JwtUtil.RefreshClaims claims = jwtUtil.parseRefreshToken(refreshToken)
                 .orElseThrow(() -> ApiException.unauthorized("Invalid refresh token"));
+        // Token tüketilmeden ÖNCE: sınıra takılan istemcinin token'ı yanmaz, Retry-After sonrası aynı token geçerli
+        accountLimiter.checkRefresh(claims.userId());
 
         if (!refreshTokens.markUsedIfActive(claims.jti())) {
             refreshTokens.findState(claims.jti()).ifPresent(state -> {

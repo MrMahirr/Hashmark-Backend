@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,7 +22,8 @@ import java.util.regex.Pattern;
  *       string literal'lar (çok satırlı olanlar dahil) ve Python docstring'leri ayrıştırılır.
  *       Böylece string içindeki {@code "// TODO"} veya C'deki {@code #include} yorum sayılmaz,
  *       {@code x = 1; // TODO: fix} gibi satır içi yorumlar ise yakalanır.</li>
- *   <li>Dönüşüm: yorumlar etiketlenir (TODO/FIXME/HACK/XXX/NOTE/DOC/INFO), çok satırlı borç
+ *   <li>Dönüşüm: yorumlar etiketlenir (TODO/FIXME/HACK/XXX/NOTE/DOC/INFO + {@code .hashmark.yml}
+ *       özel etiketleri, bkz. {@link LabelRules}), çok satırlı borç
  *       açıklamaları birleştirilir, {@code TODO(mahir)}, {@code FIXME[P1]}, tarih ve issue
  *       referansı gibi üst veriler çıkarılır.</li>
  * </ol>
@@ -34,12 +34,6 @@ public class DebtParserService {
     private static final int MAX_CONTENT_LENGTH = 500;
     private static final int MAX_CONTINUATION_LINES = 5;
 
-    private static final Set<String> DEBT_LABELS = Set.of("TODO", "FIXME", "HACK", "XXX");
-
-    // @todo / TODO(mahir): / FIXME[P1] - / NOTE ...
-    private static final Pattern EXPLICIT_LABEL = Pattern.compile(
-            "^@?(TODO|FIXME|HACK|XXX|NOTE|DOC|INFO)(?![A-Za-z0-9_])\\s*(?:[(\\[]([^)\\]]{0,60})[)\\]])?\\s*(:|-|–|—)?\\s*(.*)$",
-            Pattern.CASE_INSENSITIVE);
 
     private static final Pattern DOC_TAG_LINE = Pattern.compile(
             "^(?:@(?:param|return|returns|throws|exception|see|since|author|deprecated|version|example|link|inheritDoc|type|typedef|template)\\b|:(?:param|return|returns|raises|type|rtype)\\b)",
@@ -67,6 +61,11 @@ public class DebtParserService {
     private static final Pattern USERNAME = Pattern.compile("^@?([A-Za-z0-9_][A-Za-z0-9_.-]{0,38})$");
 
     public List<DebtDto> parse(String fileContent, String filePath) {
+        return parse(fileContent, filePath, LabelRules.DEFAULT);
+    }
+
+    /** @param rules depo yapılandırmasındaki özel / kapatılmış etiketler */
+    public List<DebtDto> parse(String fileContent, String filePath, LabelRules rules) {
         List<DebtDto> debts = new ArrayList<>();
         if (fileContent == null || fileContent.isEmpty()) {
             return debts;
@@ -74,7 +73,7 @@ public class DebtParserService {
 
         String[] lines = fileContent.split("\\r?\\n", -1);
         List<RawComment> comments = scan(lines, LanguageProfile.forPath(filePath));
-        return toDebts(comments, filePath);
+        return toDebts(comments, filePath, rules);
     }
 
     // ------------------------------------------------------------------
@@ -265,7 +264,7 @@ public class DebtParserService {
     // Aşama 2: Dönüşüm (etiketleme, birleştirme, üst veri)
     // ------------------------------------------------------------------
 
-    private List<DebtDto> toDebts(List<RawComment> comments, String filePath) {
+    private List<DebtDto> toDebts(List<RawComment> comments, String filePath, LabelRules rules) {
         // Bir satır için tek kayıt (DB'de UNIQUE(repo, file, line) var); borç etiketleri öncelikli.
         Map<Integer, DebtDto> byLine = new LinkedHashMap<>();
         boolean[] consumed = new boolean[comments.size()];
@@ -277,7 +276,7 @@ public class DebtParserService {
             RawComment current = comments.get(i);
             DebtDto dto = null;
 
-            ParsedLabel parsed = matchExplicitLabel(current.text);
+            ParsedLabel parsed = matchExplicitLabel(current.text, rules);
             if (parsed != null) {
                 StringBuilder content = new StringBuilder(parsed.content);
                 int previousLine = current.line;
@@ -287,7 +286,7 @@ public class DebtParserService {
                     if (next.group != current.group || next.line != previousLine + 1) {
                         break;
                     }
-                    if (matchExplicitLabel(next.text) != null || DOC_TAG_LINE.matcher(next.text).find()) {
+                    if (matchExplicitLabel(next.text, rules) != null || DOC_TAG_LINE.matcher(next.text).find()) {
                         break;
                     }
                     if (content.length() > 0) {
@@ -306,7 +305,7 @@ public class DebtParserService {
                 dto = toPlainComment(current, filePath);
             }
 
-            if (dto != null) {
+            if (dto != null && rules.isEnabled(dto.getLabel())) {
                 putPreferred(byLine, dto);
             }
         }
@@ -335,8 +334,8 @@ public class DebtParserService {
         return "NOTE";
     }
 
-    private ParsedLabel matchExplicitLabel(String text) {
-        Matcher m = EXPLICIT_LABEL.matcher(text);
+    private ParsedLabel matchExplicitLabel(String text, LabelRules rules) {
+        Matcher m = rules.explicitLabel().matcher(text);
         if (!m.matches()) {
             return null;
         }
@@ -349,7 +348,8 @@ public class DebtParserService {
         boolean accepted = switch (label) {
             case "TODO", "FIXME" -> true;
             case "HACK", "XXX" -> upper || colon || hasTag;
-            default -> upper || colon; // NOTE / DOC / INFO: "Note that..." gibi düz cümleleri etiket sayma
+            case "NOTE", "DOC", "INFO" -> upper || colon; // "Note that..." gibi düz cümleleri etiket sayma
+            default -> upper || colon || hasTag; // özel etiketler (.hashmark.yml): "Refactor this" etiket değil
         };
         if (!accepted) {
             return null;
@@ -380,7 +380,7 @@ public class DebtParserService {
                 .label(label)
                 .content(clipped);
 
-        if (tag != null || DEBT_LABELS.contains(label)) {
+        if (tag != null || LabelRules.isDebt(label)) {
             applyMetadata(builder, tag, content);
         }
         return builder.build();
@@ -471,7 +471,7 @@ public class DebtParserService {
     private static void putPreferred(Map<Integer, DebtDto> byLine, DebtDto dto) {
         DebtDto existing = byLine.get(dto.getLineNo());
         if (existing == null
-                || (!DEBT_LABELS.contains(existing.getLabel()) && DEBT_LABELS.contains(dto.getLabel()))) {
+                || (!LabelRules.isDebt(existing.getLabel()) && LabelRules.isDebt(dto.getLabel()))) {
             byLine.put(dto.getLineNo(), dto);
         }
     }

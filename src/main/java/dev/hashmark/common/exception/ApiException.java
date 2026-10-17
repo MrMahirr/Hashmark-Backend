@@ -7,15 +7,22 @@ public class ApiException extends RuntimeException {
     private final HttpStatus httpStatus;
     /** İstemcinin dallanabileceği makine-okur kod (ör. CONSENT_REQUIRED); çoğu hatada null. */
     private final String code;
+    /** 429/503 için istemciye önerilen bekleme (sn); null ise Retry-After başlığı yazılmaz. */
+    private final Long retryAfterSeconds;
 
     public ApiException(HttpStatus httpStatus, String message) {
         this(httpStatus, null, message);
     }
 
     public ApiException(HttpStatus httpStatus, String code, String message) {
+        this(httpStatus, code, message, null);
+    }
+
+    public ApiException(HttpStatus httpStatus, String code, String message, Long retryAfterSeconds) {
         super(message);
         this.httpStatus = httpStatus;
         this.code = code;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
 
     public HttpStatus getHttpStatus() {
@@ -24,6 +31,15 @@ public class ApiException extends RuntimeException {
 
     public String getCode() {
         return code;
+    }
+
+    public Long getRetryAfterSeconds() {
+        return retryAfterSeconds;
+    }
+
+    /** Geçici durum: tekrar denemek anlamlı (aşırı yük, kota penceresi, dış servis kesintisi). */
+    public boolean isTransient() {
+        return httpStatus == HttpStatus.SERVICE_UNAVAILABLE || httpStatus == HttpStatus.TOO_MANY_REQUESTS;
     }
 
     public static ApiException notFound(String message) {
@@ -50,8 +66,16 @@ public class ApiException extends RuntimeException {
         return new ApiException(HttpStatus.TOO_MANY_REQUESTS, message);
     }
 
+    public static ApiException tooManyRequests(String code, String message, long retryAfterSeconds) {
+        return new ApiException(HttpStatus.TOO_MANY_REQUESTS, code, message, retryAfterSeconds);
+    }
+
     public static ApiException serviceUnavailable(String message) {
         return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, message);
+    }
+
+    public static ApiException serviceUnavailable(String code, String message, long retryAfterSeconds) {
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, code, message, retryAfterSeconds);
     }
 
     public static ApiException badGateway(String message) {

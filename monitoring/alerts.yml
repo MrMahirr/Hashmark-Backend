@@ -80,6 +80,30 @@ groups:
           summary: "JVM heap %90'ın üstünde"
           description: "OOM yaklaşıyor olabilir; GC ve bellek sızıntısına bakın."
 
+      - alert: GithubCircuitOpen
+        expr: resilience4j_circuitbreaker_state{job="backend",name="github",state="open"} == 1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "GitHub devresi açık"
+          description: "2 dakikadır GitHub çağrıları hızlı hata veriyor (giriş 503, taramalar erteleniyor). https://www.githubstatus.com kontrol edin; runbook: docs/RESILIENCE.md → 'GitHub kesintisi'."
+
+      - alert: LoadSheddingActive
+        expr: sum(rate(hashmark_loadshed_rejected_total{job="backend"}[5m])) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Yük atma 10 dakikadır devrede"
+          description: "Pahalı uçlar (tarama, export, senkron) 503 alıyor. Kalıcıysa havuz/CPU büyütme tetikleyicilerine bakın (plan Bölüm 7)."
+
+      - alert: ScanQueueNearlyFull
+        expr: hashmark_scan_queue_pending{job="backend"} > 400
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Tarama kuyruğu doluluğa yakın"
+          description: "{{ $value }} iş bekliyor (üst sınır SCAN_MAX_QUEUE_DEPTH=500; dolunca yeni tarama 503 alır)."
+
       - alert: GithubRateLimitLow
         expr: hashmark_github_ratelimit_remaining{job="backend"} >= 0 and hashmark_github_ratelimit_remaining{job="backend"} < 500
         for: 5m

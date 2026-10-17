@@ -3,6 +3,7 @@ package dev.hashmark.scanner.service;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dev.hashmark.common.exception.ApiException;
+import dev.hashmark.scanner.config.RepoScanConfig;
 import dev.hashmark.scanner.config.ScanProperties;
 import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.junit.jupiter.api.AfterEach;
@@ -21,6 +22,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -40,6 +43,8 @@ class GitHubFileServiceTest {
     private volatile int tarballFinalStatus = 302;
     private volatile String lastTarballPath;
     private volatile String lastIgnoreQuery;
+    private volatile String configFile;          // null → 404
+    private volatile String lastConfigQuery;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -52,6 +57,14 @@ class GitHubFileServiceTest {
                 respond(ex, 404, new byte[0], Map.of());
             } else {
                 respond(ex, 200, ignoreFile.getBytes(StandardCharsets.UTF_8), Map.of());
+            }
+        });
+        server.createContext("/repos/o/r/contents/.hashmark.yml", ex -> {
+            lastConfigQuery = ex.getRequestURI().getRawQuery();
+            if (configFile == null) {
+                respond(ex, 404, new byte[0], Map.of());
+            } else {
+                respond(ex, 200, configFile.getBytes(StandardCharsets.UTF_8), Map.of());
             }
         });
         server.createContext("/repos/o/r/tarball", ex -> {
@@ -138,6 +151,38 @@ class GitHubFileServiceTest {
         scan(seen);
 
         assertEquals(List.of("c.py"), List.copyOf(seen.keySet()));
+    }
+
+    @Test
+    void readsRepoConfigFromSameBranchAndAppliesIncludeExclude() {
+        configFile = "include: [/src]\nexclude: ['*.gen.ts']\nlabels: {custom: [SECURITY]}\n";
+        archive = new TarTestSupport()
+                .file("o-r-abc/src/a.ts", "// SECURITY: x")
+                .file("o-r-abc/src/b.gen.ts", "// TODO: no")
+                .file("o-r-abc/lib/c.ts", "// TODO: no")
+                .tarGz();
+
+        RepoScanConfig config = service.fetchRepoConfig("o/r", "t", "dev");
+        Map<String, String> seen = new LinkedHashMap<>();
+        service.scanRepository("o/r", "t", "dev", config, seen::put, null);
+
+        assertEquals("ref=dev", lastConfigQuery);
+        assertEquals(List.of("SECURITY"), config.customLabels());
+        assertEquals(List.of("src/a.ts"), List.copyOf(seen.keySet()));
+    }
+
+    @Test
+    void missingOrOversizedRepoConfig() {
+        configFile = null;
+        assertSame(RepoScanConfig.DEFAULT, service.fetchRepoConfig("o/r", "t", null));
+        assertNull(lastConfigQuery, "varsayılan dalda ref gönderilmez");
+
+        configFile = "# " + "x".repeat(70 * 1024);
+        RepoScanConfig big = service.fetchRepoConfig("o/r", "t", null);
+        assertTrue(big.isEmpty());
+        assertTrue(big.warnings().get(0).contains("64 KB"));
+
+        assertThrows(ApiException.class, () -> service.fetchRepoConfig("o/r", "t", "../x"));
     }
 
     @Test

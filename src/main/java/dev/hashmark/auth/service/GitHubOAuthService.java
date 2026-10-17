@@ -3,6 +3,7 @@ package dev.hashmark.auth.service;
 import dev.hashmark.auth.dto.GitHubTokenResponse;
 import dev.hashmark.auth.dto.GitHubUserDto;
 import dev.hashmark.common.exception.ApiException;
+import dev.hashmark.common.resilience.GitHubResilience;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -37,9 +38,11 @@ public class GitHubOAuthService {
     private String apiUrl;
 
     private final RestTemplate restTemplate;
+    private final GitHubResilience resilience;
 
-    public GitHubOAuthService(RestTemplate restTemplate) {
+    public GitHubOAuthService(RestTemplate restTemplate, GitHubResilience resilience) {
         this.restTemplate = restTemplate;
+        this.resilience = resilience;
     }
 
     public String buildAuthorizationUrl(String state) {
@@ -68,7 +71,9 @@ public class GitHubOAuthService {
 
         HttpEntity<Map<String, String>> request = new HttpEntity<>(requestBody, headers);
         
-        ResponseEntity<GitHubTokenResponse> response = restTemplate.postForEntity(url, request, GitHubTokenResponse.class);
+        // Kod tek kullanımlıktır: bu çağrı idempotent değil, yeniden denenmez (callInteractive denemez).
+        ResponseEntity<GitHubTokenResponse> response = resilience.callInteractive(
+                () -> restTemplate.postForEntity(url, request, GitHubTokenResponse.class));
         GitHubTokenResponse responseBody = response.getBody();
 
         if (responseBody != null && responseBody.getAccessToken() != null && !responseBody.getAccessToken().isBlank()) {
@@ -89,7 +94,8 @@ public class GitHubOAuthService {
 
         HttpEntity<Void> request = new HttpEntity<>(headers);
 
-        ResponseEntity<GitHubUserDto> response = restTemplate.exchange(url, HttpMethod.GET, request, GitHubUserDto.class);
+        ResponseEntity<GitHubUserDto> response = resilience.callInteractive(
+                () -> restTemplate.exchange(url, HttpMethod.GET, request, GitHubUserDto.class));
         GitHubUserDto body = response.getBody();
         if (body == null) {
             throw ApiException.unauthorized("GitHub user response was empty");

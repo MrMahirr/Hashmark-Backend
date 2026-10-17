@@ -4,6 +4,7 @@ import dev.hashmark.auth.repository.OAuthStateRepository;
 import dev.hashmark.auth.repository.RefreshTokenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +23,7 @@ public class AuthTokenCleanup {
     }
 
     @Scheduled(fixedDelay = 3_600_000, initialDelay = 60_000)
+    @SchedulerLock(name = "auth-token-cleanup", lockAtMostFor = "PT10M", lockAtLeastFor = "PT1M")
     public void purge() {
         try {
             int tokens = refreshTokens.deleteExpired();

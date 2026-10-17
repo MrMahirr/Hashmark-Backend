@@ -2,6 +2,7 @@ package dev.hashmark.repo.controller;
 
 import dev.hashmark.repo.dto.RepoDto;
 import dev.hashmark.repo.service.RepoService;
+import dev.hashmark.webhook.RepoWebhookService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -18,9 +19,11 @@ import java.util.List;
 public class RepoController {
 
     private final RepoService repoService;
+    private final RepoWebhookService repoWebhookService;
 
-    public RepoController(RepoService repoService) {
+    public RepoController(RepoService repoService, RepoWebhookService repoWebhookService) {
         this.repoService = repoService;
+        this.repoWebhookService = repoWebhookService;
     }
 
     @GetMapping
@@ -64,9 +67,25 @@ public class RepoController {
     public record BranchRequest(String branch) {
     }
 
+    @PutMapping("/{id}/auto-scan")
+    @Operation(summary = "Otomatik taramayi ac/kapat (izlenen dala her push'ta tarama; GitHub webhook kurar, depoda admin yetkisi gerekir)")
+    public RepoDto setAutoScan(@AuthenticationPrincipal Long userId, @PathVariable Long id,
+                               @RequestBody AutoScanRequest request) {
+        if (request.enabled()) {
+            repoWebhookService.enable(userId, id);
+        } else {
+            repoWebhookService.disable(userId, id);
+        }
+        return repoService.getRepo(userId, id);
+    }
+
+    public record AutoScanRequest(boolean enabled) {
+    }
+
     @DeleteMapping("/{id}")
     @Operation(summary = "Repoyu sil")
     public ResponseEntity<Void> deleteRepo(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
+        repoWebhookService.removeQuietly(userId, id);
         repoService.deleteRepo(userId, id);
         return ResponseEntity.noContent().build();
     }

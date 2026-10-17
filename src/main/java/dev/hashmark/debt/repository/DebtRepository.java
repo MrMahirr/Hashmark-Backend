@@ -230,11 +230,11 @@ public class DebtRepository {
     // Blame zenginleştirme
     // ------------------------------------------------------------------
 
-    /** Açık, henüz blame sorgulanmamış borcu olan dosyalar (yalnızca gerçek borç etiketleri). */
+    /** Açık, henüz blame sorgulanmamış borcu olan dosyalar (yalnızca borç etiketleri; .hashmark.yml özel etiketleri dahil). */
     public List<String> findFilesNeedingBlame(Long repoId, int limit) {
         return jdbcTemplate.queryForList(
                 "SELECT d.file_path FROM debts d WHERE d.repo_id = ? AND d.resolved_at IS NULL " +
-                "AND d.blame_at IS NULL AND d.label IN ('TODO', 'FIXME', 'HACK', 'XXX') " +
+                "AND d.blame_at IS NULL AND d.label NOT IN ('NOTE', 'DOC', 'INFO') " +
                 "GROUP BY d.file_path ORDER BY MIN(d.id) LIMIT ?",
                 String.class, repoId, limit);
     }
@@ -245,7 +245,7 @@ public class DebtRepository {
     public List<LineRef> findLinesNeedingBlame(Long repoId, String filePath) {
         return jdbcTemplate.query(
                 "SELECT d.id, d.line_no FROM debts d WHERE d.repo_id = ? AND d.file_path = ? " +
-                "AND d.resolved_at IS NULL AND d.blame_at IS NULL AND d.label IN ('TODO', 'FIXME', 'HACK', 'XXX')",
+                "AND d.resolved_at IS NULL AND d.blame_at IS NULL AND d.label NOT IN ('NOTE', 'DOC', 'INFO')",
                 (rs, i) -> new LineRef(rs.getLong("id"), rs.getInt("line_no")), repoId, filePath);
     }
 

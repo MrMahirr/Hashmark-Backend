@@ -12,4 +12,7 @@ public class GitHubRepoDto {
     
     @JsonProperty("private")
     private Boolean isPrivate;
+
+    /** Depo boyutu (KB), GitHub'ın bildirdiği. */
+    private Integer size;
 }
