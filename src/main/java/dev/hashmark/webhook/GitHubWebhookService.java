@@ -3,6 +3,7 @@ package dev.hashmark.webhook;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.common.util.AesEncryptionUtil;
+import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.pr.GitHubPullRequestClient;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
@@ -27,7 +28,7 @@ public class GitHubWebhookService {
     private static final Logger log = LoggerFactory.getLogger(GitHubWebhookService.class);
     private static final String BRANCH_REF_PREFIX = "refs/heads/";
 
-    /** @param result pong | queued | coalesced | already_queued | ignored | skipped | duplicate */
+    /** @param result pong | queued | coalesced | already_queued | ignored | skipped | duplicate | resolved | reopened */
     public record Delivery(String result, Long jobId, String reason) {
         static Delivery ignored(String reason) {
             return new Delivery("ignored", null, reason);
@@ -45,14 +46,16 @@ public class GitHubWebhookService {
     private final AesEncryptionUtil aes;
     private final ScanService scanService;
     private final WebhookDeliveryRepository deliveries;
+    private final DebtRepository debtRepository;
     private final ObjectMapper mapper = JsonMapper.builder().build();
 
     public GitHubWebhookService(RepoRepository repoRepository, AesEncryptionUtil aes, ScanService scanService,
-                                WebhookDeliveryRepository deliveries) {
+                                WebhookDeliveryRepository deliveries, DebtRepository debtRepository) {
         this.repoRepository = repoRepository;
         this.aes = aes;
         this.scanService = scanService;
         this.deliveries = deliveries;
+        this.debtRepository = debtRepository;
     }
 
     public Delivery handle(long repoId, String event, String signature, byte[] body) {
@@ -77,7 +80,7 @@ public class GitHubWebhookService {
         if ("ping".equals(event)) {
             return new Delivery("pong", null, null);
         }
-        if (!"push".equals(event) && !"pull_request".equals(event)) {
+        if (!"push".equals(event) && !"pull_request".equals(event) && !"issues".equals(event)) {
             return Delivery.ignored("event '" + clip(event) + "' is not handled");
         }
 
@@ -89,6 +92,9 @@ public class GitHubWebhookService {
         }
         if ("pull_request".equals(event)) {
             return handlePullRequest(repo, payload);
+        }
+        if ("issues".equals(event)) {
+            return handleIssue(repo, payload);
         }
 
         String ignoreReason = ignoreReason(repo, payload);
@@ -120,6 +126,29 @@ public class GitHubWebhookService {
                 () -> scanService.enqueuePrCheck(repo, number, head, base));
         log.info("Pull request webhook for repo {} PR #{}: {}", repo.getId(), number, queued.outcome());
         return Delivery.of(queued);
+    }
+
+    /** Hashmark'ın açtığı issue kapanınca borç çözülür, yeniden açılınca geri açılır. */
+    private Delivery handleIssue(Repo repo, JsonNode payload) {
+        if (!sameRepository(repo, payload)) {
+            return Delivery.ignored("repository does not match");
+        }
+        String action = payload.path("action").asText("");
+        if (!"closed".equals(action) && !"reopened".equals(action)) {
+            return Delivery.ignored("issue action '" + clip(action) + "' is not tracked");
+        }
+        int number = payload.path("issue").path("number").asInt(0);
+        if (number <= 0) {
+            throw ApiException.badRequest("Malformed issue payload");
+        }
+        boolean closed = "closed".equals(action);
+        int updated = TenantContext.asUser(repo.getUserId(),
+                () -> debtRepository.applyGithubIssueState(repo.getId(), number, closed));
+        if (updated == 0) {
+            return Delivery.ignored("issue is not linked to a debt");
+        }
+        log.info("Issue #{} of repo {} {}: {} debt(s) updated", number, repo.getId(), action, updated);
+        return new Delivery(closed ? "resolved" : "reopened", null, updated + " debt(s)");
     }
 
     private static boolean sameRepository(Repo repo, JsonNode payload) {

@@ -73,6 +73,9 @@ public class DebtRepository {
                 .authorLogin(rs.getString("author_login"))
                 .authorName(rs.getString("author_name"))
                 .introducedAt(ts(rs.getTimestamp("introduced_at")))
+                .githubIssueNumber(rs.getObject("github_issue_number") != null ? rs.getInt("github_issue_number") : null)
+                .githubIssueUrl(rs.getString("github_issue_url"))
+                .githubIssueState(rs.getString("github_issue_state"))
                 .build();
     };
 
@@ -307,6 +310,55 @@ public class DebtRepository {
         return updated == 0 ? Optional.empty() : findByIdForUser(userId, debtId);
     }
 
+    // ------------------------------------------------------------------
+    // GitHub Issue bağlantısı
+    // ------------------------------------------------------------------
+
+    /**
+     * Issue'yu borca bağlar; borçta zaten issue varsa dokunmaz (iki eşzamanlı istek iki issue'ya bağlanmasın).
+     *
+     * @return bağlandıysa true
+     */
+    public boolean linkGithubIssue(Long userId, Long debtId, int number, String url) {
+        return jdbcTemplate.update(
+                "UPDATE debts SET github_issue_number = ?, github_issue_url = ?, github_issue_state = 'open' " +
+                "WHERE id = ? AND github_issue_number IS NULL AND repo_id IN (SELECT id FROM repos WHERE user_id = ?)",
+                number, url, debtId, userId) == 1;
+    }
+
+    /**
+     * issues webhook'u: issue kapanınca borç elle çözülmüş sayılır (kod hâlâ duruyorsa sonraki tarama yeniden açar
+     * ve "Debt reopened" bildirimi gider); yeniden açılınca yalnızca elle çözülmüşse geri açılır.
+     *
+     * @return etkilenen borç sayısı
+     */
+    public int applyGithubIssueState(Long repoId, int number, boolean closed) {
+        if (closed) {
+            return jdbcTemplate.update(
+                    "UPDATE debts SET github_issue_state = 'closed', triage_status = 'OPEN', " +
+                    "manually_resolved = (manually_resolved OR resolved_at IS NULL), " +
+                    "resolved_at = COALESCE(resolved_at, NOW()) WHERE repo_id = ? AND github_issue_number = ?",
+                    repoId, number);
+        }
+        return jdbcTemplate.update(
+                "UPDATE debts SET github_issue_state = 'open', " +
+                "resolved_at = CASE WHEN manually_resolved THEN NULL ELSE resolved_at END, manually_resolved = FALSE " +
+                "WHERE repo_id = ? AND github_issue_number = ?", repoId, number);
+    }
+
+    /** Kullanıcının açık borçlarını ekleyen GitHub kullanıcıları (yazar filtresi seçenekleri), en çok 200. */
+    public List<String> findAuthors(Long userId, Long repoId) {
+        StringBuilder sql = new StringBuilder("SELECT DISTINCT d.author_login FROM debts d JOIN repos r ON r.id = d.repo_id " +
+                "WHERE r.user_id = ? AND d.author_login IS NOT NULL AND " + ACTIVE);
+        List<Object> params = new ArrayList<>(List.of(userId));
+        if (repoId != null) {
+            sql.append(" AND d.repo_id = ?");
+            params.add(repoId);
+        }
+        sql.append(" ORDER BY d.author_login LIMIT 200");
+        return jdbcTemplate.queryForList(sql.toString(), String.class, params.toArray());
+    }
+
     public Optional<DebtDto> findByIdForUser(Long userId, Long debtId) {
         String sql = "SELECT d.*, r.full_name AS repo_full_name FROM debts d JOIN repos r ON d.repo_id = r.id " +
                      "WHERE d.id = ? AND r.user_id = ?";
@@ -336,6 +388,15 @@ public class DebtRepository {
         if (filter.getAssignee() != null && !filter.getAssignee().isBlank()) {
             where.append(" AND COALESCE(d.assigned_to, d.parsed_assignee) = ? ");
             params.add(filter.getAssignee().trim());
+        }
+        if (filter.getAuthor() != null && !filter.getAuthor().isBlank()) {
+            where.append(" AND lower(d.author_login) = lower(?) ");
+            params.add(filter.getAuthor().trim());
+        }
+        Integer olderThan = filter.safeOlderThanDays();
+        if (olderThan != null) {
+            where.append(" AND COALESCE(d.introduced_at, d.detected_at) <= NOW() - (? * INTERVAL '1 day') ");
+            params.add(olderThan);
         }
         if (filter.getQ() != null && !filter.getQ().isBlank()) {
             String escaped = filter.getQ().trim()

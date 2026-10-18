@@ -39,6 +39,13 @@ public class DebtController {
         return debtService.listDebts(userId, filter);
     }
 
+    @GetMapping("/authors")
+    @Operation(summary = "Acik borclari ekleyen GitHub kullanicilari (git blame; yazar filtresi icin)")
+    public java.util.List<String> getAuthors(@AuthenticationPrincipal Long userId,
+                                             @RequestParam(required = false) Long repoId) {
+        return debtService.getAuthors(userId, repoId);
+    }
+
     @GetMapping("/stats")
     @Operation(summary = "Borc istatistikleri")
     public DebtStatsDto getStats(

@@ -108,7 +108,7 @@ public record PrDebtReport(String repoFullName, int prNumber, String headSha, Li
     }
 
     /** Tablo hücresine güvenli metin: HTML yok, markdown etkisiz, @etiketleme ve #referans bildirim üretmez. */
-    static String escape(String text) {
+    public static String escape(String text) {
         StringBuilder out = new StringBuilder(text.length() + 16);
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);

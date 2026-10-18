@@ -36,6 +36,17 @@ public class DebtFilterRequest {
     private String q;
     private String assignee;
     private String priority;
+    /** Borcu ekleyen GitHub kullanıcısı (git blame, {@code author_login}); büyük/küçük harf duyarsız. */
+    private String author;
+    /** Yalnızca en az bu kadar gündür var olan borçlar (yaş = blame tarihi, yoksa ilk görülme). */
+    private Integer olderThanDays;
+
+    public static final int MAX_AGE_DAYS = 36_500;
+
+    /** Negatif / aşırı değer yok sayılır. */
+    public Integer safeOlderThanDays() {
+        return olderThanDays == null || olderThanDays < 0 ? null : Math.min(olderThanDays, MAX_AGE_DAYS);
+    }
     /** detectedAt (varsayılan), resolvedAt, filePath, lineNo, label, dueDate, introducedAt, priority */
     private String sort;
     /** asc | desc (varsayılan desc) */

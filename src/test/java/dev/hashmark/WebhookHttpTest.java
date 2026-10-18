@@ -171,7 +171,7 @@ class WebhookHttpTest {
                 .getResponse().getContentAsString().contains("not a branch push"));
         assertTrue(deliver(repoId, "push", push("refs/heads/main").replace("\"deleted\":false", "\"deleted\":true"), SECRET)
                 .getResponse().getContentAsString().contains("branch deleted"));
-        assertTrue(deliver(repoId, "issues", "{}", SECRET)
+        assertTrue(deliver(repoId, "star", "{}", SECRET)
                 .getResponse().getContentAsString().contains("not handled"));
         assertEquals(200, deliver(repoId, "ping", "{\"zen\":\"x\"}", SECRET).getResponse().getStatus());
         assertEquals(0, jobs("PENDING"));
@@ -240,6 +240,66 @@ class WebhookHttpTest {
         assertEquals(400, deliver(repoId, "pull_request", pullRequest("opened", 7, "not-a-sha"), SECRET)
                 .getResponse().getStatus());
         assertEquals(0, prJobs("PENDING"));
+    }
+
+    private long debt(String label, String author, int ageDays, Integer issueNumber) {
+        return jdbc.queryForObject(
+                "INSERT INTO debts (repo_id, file_path, line_no, label, content, fingerprint, occurrence, author_login, " +
+                "introduced_at, github_issue_number) VALUES (?, 'a.ts', 1, ?, 'c', ?, 0, ?, NOW() - (? * INTERVAL '1 day'), ?) " +
+                "RETURNING id", Long.class, repoId, label, java.util.UUID.randomUUID().toString().substring(0, 32),
+                author, ageDays, issueNumber);
+    }
+
+    private String issueEvent(String action, int number) {
+        return "{\"action\":\"" + action + "\",\"issue\":{\"number\":" + number + "},"
+                + "\"repository\":{\"id\":" + githubRepoId + "}}";
+    }
+
+    @Test
+    void closingTheLinkedIssueResolvesTheDebtAndReopeningRestoresIt() throws Exception {
+        long linked = debt("TODO", "octocat", 1, 42);
+        long other = debt("TODO", "octocat", 1, null);
+
+        MvcResult closed = deliver(repoId, "issues", issueEvent("closed", 42), SECRET);
+        assertTrue(closed.getResponse().getContentAsString().contains("\"resolved\""), closed.getResponse().getContentAsString());
+        assertEquals(Boolean.TRUE, jdbc.queryForObject(
+                "SELECT resolved_at IS NOT NULL AND manually_resolved AND github_issue_state = 'closed' FROM debts WHERE id = ?",
+                Boolean.class, linked));
+        assertEquals(Boolean.TRUE, jdbc.queryForObject("SELECT resolved_at IS NULL FROM debts WHERE id = ?", Boolean.class, other));
+
+        deliver(repoId, "issues", issueEvent("reopened", 42), SECRET);
+        assertEquals(Boolean.TRUE, jdbc.queryForObject(
+                "SELECT resolved_at IS NULL AND NOT manually_resolved AND github_issue_state = 'open' FROM debts WHERE id = ?",
+                Boolean.class, linked));
+
+        assertTrue(deliver(repoId, "issues", issueEvent("closed", 99), SECRET)
+                .getResponse().getContentAsString().contains("not linked"));
+        assertTrue(deliver(repoId, "issues", issueEvent("labeled", 42), SECRET)
+                .getResponse().getContentAsString().contains("not tracked"));
+    }
+
+    @Test
+    void debtsCanBeFilteredByBlameAuthorAndAge() throws Exception {
+        debt("TODO", "Octocat", 200, null);
+        debt("FIXME", "octocat", 5, null);
+        debt("HACK", "hubot", 400, null);
+        long userId = jdbc.queryForObject("SELECT user_id FROM repos WHERE id = ?", Long.class, repoId);
+        String bearer = "Bearer " + jwt.generateAccessToken(userId);
+        java.util.function.Function<String, String> get = query -> {
+            try {
+                return mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/debts" + query)
+                        .header("Authorization", bearer)).andReturn().getResponse().getContentAsString();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+
+        assertTrue(get.apply("?author=OCTOCAT").contains("\"totalElements\":2"), "yazar büyük/küçük harf duyarsız");
+        assertTrue(get.apply("?olderThanDays=90").contains("\"totalElements\":2"));
+        assertTrue(get.apply("?author=octocat&olderThanDays=90").contains("\"totalElements\":1"));
+        assertTrue(get.apply("?olderThanDays=-5").contains("\"totalElements\":3"), "geçersiz yaş yok sayılır");
+        String authors = get.apply("/authors");
+        assertTrue(authors.contains("hubot") && authors.contains("octocat"), authors);
     }
 
     @Test

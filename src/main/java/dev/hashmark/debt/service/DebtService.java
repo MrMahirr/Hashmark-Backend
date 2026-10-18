@@ -32,6 +32,10 @@ public class DebtService {
         return debtRepository.findByFilter(userId, filter);
     }
 
+    public java.util.List<String> getAuthors(Long userId, Long repoId) {
+        return debtRepository.findAuthors(userId, repoId);
+    }
+
     public DebtStatsDto getStats(Long userId, Long repoId) {
         return debtRepository.getStats(userId, repoId);
     }
