@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
  *   <tr><td>export</td><td>{@code GET /debts/export}</td><td>kullanıcı</td></tr>
  *   <tr><td>sync</td><td>{@code POST /repos/sync}</td><td>kullanıcı</td></tr>
  *   <tr><td>context</td><td>{@code GET /debts/{id}/context}</td><td>kullanıcı</td></tr>
+ *   <tr><td>issue</td><td>{@code POST /debts/{id}/issue}, {@code POST /debts/issues}</td><td>kullanıcı</td></tr>
  *   <tr><td>public</td><td>{@code /public/**}</td><td>IP</td></tr>
  *   <tr><td>webhook</td><td>{@code /webhooks/**}</td><td>yol (depo); IP tabanı uygulanmaz</td></tr>
  *   <tr><td>user</td><td>kimlikli her istek</td><td>kullanıcı</td></tr>
@@ -42,6 +43,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final long WINDOW_MS = 60_000L;
     private static final Pattern CONTEXT_PATH = Pattern.compile("^/debts/[^/]+/context$");
+    private static final Pattern ISSUE_PATH = Pattern.compile("^/debts/([^/]+/issue|issues)$");
 
     private final RateLimitProperties props;
     private final SlidingWindowLimiter limiter;
@@ -75,6 +77,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         p.setContextPerMinute(0);
         p.setPublicPerMinute(0);
         p.setWebhookPerMinute(0);
+        p.setIssuePerMinute(0);
         p.setUserPerMinute(0);
         p.setIpPerMinute(0);
         return p;
@@ -106,6 +109,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         if ("GET".equalsIgnoreCase(method) && CONTEXT_PATH.matcher(path).matches()
                 && rejected("context", subject, props.getContextPerMinute(), response)) {
+            return;
+        }
+        if ("POST".equalsIgnoreCase(method) && ISSUE_PATH.matcher(path).matches()
+                && rejected("issue", subject, props.getIssuePerMinute(), response)) {
             return;
         }
         if (path.startsWith("/public/") && rejected("public", ip, props.getPublicPerMinute(), response)) {

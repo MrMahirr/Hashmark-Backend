@@ -95,6 +95,24 @@ public class GitHubFileService {
         return RepoScanConfig.parse(content);
     }
 
+    /**
+     * Taramayla aynı dosya kuralları (desteklenen uzantı, hariç dizinler, {@code .hashmarkignore} ve
+     * {@code .hashmark.yml} include/exclude); PR kontrolü değişen dosyaları bununla süzer.
+     *
+     * @param ref dal ya da commit; {@code null} = varsayılan dal
+     */
+    public ScanFileFilter fileFilter(String repoFullName, String githubToken, String ref, RepoScanConfig config) {
+        String validRef = validatedRef(repoFullName, ref);
+        return new ScanFileFilter(Set.copyOf(properties.getExcludedDirs()),
+                fetchRootFile(repoFullName, githubToken, validRef, ".hashmarkignore", MAX_IGNORE_FILE_BYTES),
+                config.include(), config.exclude());
+    }
+
+    /** Taramada atlanan dosya boyutu sınırı (PR kontrolü de aynı sınırı uygular). */
+    public long maxFileSizeBytes() {
+        return properties.getMaxFileSizeBytes();
+    }
+
     /** {@code .hashmark.yml} olmadan tarar (varsayılan yapılandırma). */
     public ScanResult scanRepository(String repoFullName, String githubToken, String branch,
                                      FileHandler handler, IntConsumer progress) {

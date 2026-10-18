@@ -166,10 +166,22 @@ public class RepoRepository {
                 encryptedSecret, id, userId);
     }
 
-    public int updateWebhookId(Long id, Long userId, long webhookId) {
+    /** @param eventsVersion hook'un abone olduğu olay kümesinin sürümü (GitHubHookClient.EVENTS_VERSION) */
+    public int updateWebhookId(Long id, Long userId, long webhookId, int eventsVersion) {
         return jdbcTemplate.update(
-                "UPDATE repos SET webhook_id = ?, webhook_created_at = COALESCE(webhook_created_at, NOW()) " +
-                "WHERE id = ? AND user_id = ?", webhookId, id, userId);
+                "UPDATE repos SET webhook_id = ?, webhook_version = ?, " +
+                "webhook_created_at = COALESCE(webhook_created_at, NOW()) WHERE id = ? AND user_id = ?",
+                webhookId, eventsVersion, id, userId);
+    }
+
+    /** Olay kümesi eski sürümde kalmış hook'lar (sistem kapsamında çağrılır). */
+    public List<Repo> findOutdatedWebhooks(int currentVersion, int limit) {
+        return jdbcTemplate.query("SELECT * FROM repos WHERE webhook_id IS NOT NULL AND webhook_version < ? " +
+                                  "ORDER BY id LIMIT ?", repoRowMapper, currentVersion, limit);
+    }
+
+    public int updateWebhookVersion(Long id, int version) {
+        return jdbcTemplate.update("UPDATE repos SET webhook_version = ? WHERE id = ?", version, id);
     }
 
     public int clearWebhook(Long id, Long userId) {
@@ -193,7 +205,8 @@ public class RepoRepository {
     public boolean requestRescanIfRunning(Long repoId) {
         return jdbcTemplate.update(
                 "UPDATE repos SET rescan_requested = TRUE WHERE id = ? AND EXISTS " +
-                "(SELECT 1 FROM scan_jobs j WHERE j.repo_id = repos.id AND j.status = 'RUNNING')", repoId) == 1;
+                "(SELECT 1 FROM scan_jobs j WHERE j.repo_id = repos.id AND j.status = 'RUNNING' AND j.kind = 'SCAN')",
+                repoId) == 1;
     }
 
     /** Bekleyen yeniden tarama isteğini atomik olarak tüketir. */

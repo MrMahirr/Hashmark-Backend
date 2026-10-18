@@ -31,6 +31,8 @@ public class RateLimitProperties {
      * IP tabanı uygulanmaz, imza doğrulamadan önceki tek uygulama içi sınır budur.
      */
     private int webhookPerMinute = 60;
+    /** {@code POST /debts/{id}/issue} ve {@code POST /debts/issues} (toplu: 20 issue), kullanıcı başına. */
+    private int issuePerMinute = 10;
 
     // ---- genel taban (her istek)
     /** Kimlikli her istek, kullanıcı başına. */

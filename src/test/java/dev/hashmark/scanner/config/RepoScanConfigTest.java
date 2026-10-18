@@ -123,4 +123,50 @@ class RepoScanConfigTest {
         assertTrue(typed.isEmpty());
         assertFalse(typed.warnings().isEmpty());
     }
+
+    @Test
+    void prSettingsDefaultsAndBudget() {
+        assertEquals(RepoScanConfig.PrSettings.DEFAULT, RepoScanConfig.parse(null).pr());
+        assertTrue(RepoScanConfig.parse(null).pr().comment());
+        assertFalse(RepoScanConfig.parse(null).pr().hasBudget());
+
+        RepoScanConfig config = RepoScanConfig.parse("""
+                labels: {custom: [SECURITY]}
+                pr:
+                  comment: false
+                  budget:
+                    max-new: 3
+                    labels: {fixme: 0, SECURITY: 1}
+                """);
+
+        RepoScanConfig.PrSettings pr = config.pr();
+        assertFalse(pr.comment());
+        assertTrue(pr.status());
+        assertEquals(3, pr.maxNew());
+        assertEquals(java.util.Map.of("FIXME", 0, "SECURITY", 1), pr.labelBudget());
+        assertTrue(config.warnings().isEmpty(), config.warnings().toString());
+    }
+
+    @Test
+    void invalidPrSettingsAreReportedAndIgnored() {
+        RepoScanConfig config = RepoScanConfig.parse("""
+                pr:
+                  comment: yes please
+                  colour: red
+                  budget:
+                    max-new: -1
+                    labels: {NOTE: 0, TODO: many, HACK: 2}
+                """);
+
+        RepoScanConfig.PrSettings pr = config.pr();
+        assertTrue(pr.comment(), "geçersiz değerde varsayılan");
+        assertEquals(null, pr.maxNew());
+        assertEquals(java.util.Map.of("HACK", 2), pr.labelBudget());
+        String all = String.join(" | ", config.warnings());
+        assertTrue(all.contains("'pr.comment' must be true or false"), all);
+        assertTrue(all.contains("pr.colour"), all);
+        assertTrue(all.contains("'pr.budget.max-new' must be a whole number"), all);
+        assertTrue(all.contains("'NOTE' is not a debt label"), all);
+        assertTrue(all.contains("pr.budget.labels.TODO"), all);
+    }
 }

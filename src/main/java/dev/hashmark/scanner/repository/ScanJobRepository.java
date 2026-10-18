@@ -54,10 +54,44 @@ public class ScanJobRepository {
             .runAfter(ts(rs.getTimestamp("run_after")))
             .deferrals(rs.getInt("deferrals"))
             .claimToken(rs.getObject("claim_token", UUID.class))
+            .kind(rs.getString("kind"))
+            .prNumber(rs.getObject("pr_number") != null ? rs.getInt("pr_number") : null)
+            .prHeadSha(rs.getString("pr_head_sha"))
+            .prBaseSha(rs.getString("pr_base_sha"))
             .build();
 
     public static final String TRIGGER_MANUAL = "MANUAL";
     public static final String TRIGGER_PUSH = "PUSH";
+    public static final String TRIGGER_PULL_REQUEST = "PULL_REQUEST";
+    public static final String KIND_SCAN = "SCAN";
+    public static final String KIND_PR = "PR";
+
+    /**
+     * PR kontrolünü kuyruğa alır. Aynı PR için bekleyen kontrol varsa yalnızca commit'i güncellenir (art arda
+     * push'lar tek kontrole iner); çalışan kontrol varsa yenisi eklenir.
+     */
+    public ScanJob enqueuePrCheck(Long repoId, Long userId, int prNumber, String headSha, String baseSha) {
+        for (int attempt = 0; ; attempt++) {
+            List<ScanJob> updated = jdbcTemplate.query(
+                    "UPDATE scan_jobs SET pr_head_sha = ?, pr_base_sha = ?, run_after = NULL " +
+                    "WHERE repo_id = ? AND pr_number = ? AND kind = 'PR' AND status = 'PENDING' RETURNING *",
+                    scanJobRowMapper, headSha, baseSha, repoId, prNumber);
+            if (!updated.isEmpty()) {
+                return updated.get(0);
+            }
+            try {
+                return jdbcTemplate.queryForObject(
+                        "INSERT INTO scan_jobs (repo_id, user_id, status, triggered_by, kind, pr_number, pr_head_sha, " +
+                        "pr_base_sha) VALUES (?, ?, 'PENDING', ?, 'PR', ?, ?, ?) RETURNING *",
+                        scanJobRowMapper, repoId, userId, TRIGGER_PULL_REQUEST, prNumber, headSha, baseSha);
+            } catch (org.springframework.dao.DuplicateKeyException e) {
+                // Aynı anda gelen iki teslimat: diğeri ekledi, bir sonraki turda güncellenir
+                if (attempt >= 1) {
+                    throw e;
+                }
+            }
+        }
+    }
 
     /** Yeni iş kuyruğa PENDING olarak eklenir. Repo için aktif iş varsa {@code DuplicateKeyException} fırlatır. */
     public ScanJob enqueue(Long repoId, Long userId, String branch) {
@@ -94,10 +128,10 @@ public class ScanJobRepository {
         return n == null ? 0 : n;
     }
 
-    /** Kullanıcı kotası: kullanıcının kuyrukta bekleyen + çalışan iş sayısı. */
+    /** Kullanıcı kotası: kullanıcının kuyrukta bekleyen + çalışan tarama sayısı (PR kontrolleri sayılmaz). */
     public int countActiveByUser(Long userId) {
         Integer n = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM scan_jobs WHERE user_id = ? AND status IN ('PENDING', 'RUNNING')",
+                "SELECT COUNT(*) FROM scan_jobs WHERE user_id = ? AND status IN ('PENDING', 'RUNNING') AND kind = 'SCAN'",
                 Integer.class, userId);
         return n == null ? 0 : n;
     }
@@ -108,7 +142,8 @@ public class ScanJobRepository {
      */
     public int countCreatedByUserWithinHours(Long userId, int hours) {
         Integer n = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM scan_jobs WHERE user_id = ? AND created_at >= NOW() - (? * INTERVAL '1 hour')",
+                "SELECT COUNT(*) FROM scan_jobs WHERE user_id = ? AND kind = 'SCAN' " +
+                "AND created_at >= NOW() - (? * INTERVAL '1 hour')",
                 Integer.class, userId, hours);
         return n == null ? 0 : n;
     }
@@ -240,13 +275,14 @@ public class ScanJobRepository {
         String sql = "DELETE FROM scan_jobs WHERE id IN (" +
                      "SELECT j.id FROM scan_jobs j WHERE j.status IN ('DONE', 'FAILED') " +
                      "AND COALESCE(j.finished_at, j.created_at) < NOW() - (? * INTERVAL '1 day') " +
-                     "AND EXISTS (SELECT 1 FROM scan_jobs n WHERE n.repo_id = j.repo_id AND n.id > j.id) " +
+                     "AND EXISTS (SELECT 1 FROM scan_jobs n WHERE n.repo_id = j.repo_id AND n.kind = j.kind AND n.id > j.id) " +
                      "ORDER BY j.id LIMIT ?)";
         return jdbcTemplate.update(sql, days, limit);
     }
 
+    /** Deponun son <b>taraması</b> (tarama durumu ucu); PR kontrolleri hariç. */
     public Optional<ScanJob> findLatestByRepoId(Long repoId) {
-        String sql = "SELECT * FROM scan_jobs WHERE repo_id = ? ORDER BY created_at DESC, id DESC LIMIT 1";
+        String sql = "SELECT * FROM scan_jobs WHERE repo_id = ? AND kind = 'SCAN' ORDER BY created_at DESC, id DESC LIMIT 1";
         return jdbcTemplate.query(sql, scanJobRowMapper, repoId).stream().findFirst();
     }
 

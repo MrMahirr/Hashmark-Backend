@@ -35,4 +35,14 @@ public class ScanJob {
     private Integer deferrals;
     /** Bu sahiplenmeye ait jeton; sonuç/kalp atışı yazımları bununla kapsamlanır (fencing). */
     private UUID claimToken;
+    /** SCAN (depo taraması) | PR (pull request borç kontrolü) */
+    private String kind;
+    /** Yalnızca kind = PR */
+    private Integer prNumber;
+    private String prHeadSha;
+    private String prBaseSha;
+
+    public boolean isPrCheck() {
+        return "PR".equals(kind);
+    }
 }

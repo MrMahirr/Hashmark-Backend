@@ -352,6 +352,19 @@ class RowLevelSecurityTest {
         assertEquals(Boolean.FALSE, owner.queryForObject(
                 "SELECT rescan_requested FROM " + SCHEMA + ".repos WHERE id = ?", Boolean.class, repoA));
         assertEquals(0L, ownerCount("SELECT count(*) FROM scan_jobs WHERE repo_id = ?", repoB));
+
+        // PR kontrolü de sahibin kapsamında kuyruğa yazılır (RLS WITH CHECK)
+        byte[] pr = ("{\"action\":\"opened\",\"pull_request\":{\"number\":3,\"head\":{\"sha\":\"" + "a".repeat(40)
+                + "\"},\"base\":{\"sha\":\"" + "b".repeat(40) + "\"}},\"repository\":{\"id\":\"" + githubId + "\"}}")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String prResult = mvc.perform(post("/webhooks/github/" + repoA).header("X-GitHub-Event", "pull_request")
+                        .header("X-GitHub-Delivery", UUID.randomUUID().toString())
+                        .header("X-Hub-Signature-256", dev.hashmark.webhook.WebhookSignature.sign("rls-secret", pr))
+                        .contentType(MediaType.APPLICATION_JSON).content(pr))
+                .andReturn().getResponse().getContentAsString();
+        assertTrue(prResult.contains("\"queued\""), prResult);
+        assertEquals(1L, ownerCount("SELECT count(*) FROM scan_jobs WHERE repo_id = ? AND kind = 'PR' AND user_id = ?",
+                repoA, userA));
         owner.update("DELETE FROM " + SCHEMA + ".scan_jobs WHERE repo_id = ?", repoA);
     }
 }

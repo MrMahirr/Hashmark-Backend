@@ -82,7 +82,7 @@ class GitHubHookClientTest {
 
         assertEquals(List.of("POST /repos/o/r/hooks"), calls);
         String body = bodies.get(0);
-        assertTrue(body.contains("\"events\":[\"push\"]"), body);
+        assertTrue(body.contains("\"events\":[\"push\",\"pull_request\",\"issues\"]"), body);
         assertTrue(body.contains("\"content_type\":\"json\""), body);
         assertTrue(body.contains("\"insecure_ssl\":\"0\""), body);
         assertTrue(body.contains("\"secret\":\"s3cret\""), body);
@@ -104,6 +104,19 @@ class GitHubHookClientTest {
         ApiException e = assertThrows(ApiException.class, () -> client.createOrAdopt("o/r", "t", URL, "s"));
         assertEquals(HttpStatus.FORBIDDEN, e.getHttpStatus());
         assertTrue(e.getMessage().contains("Admin access"));
+    }
+
+    @Test
+    void addEventsPatchesOnlyTheEventList() {
+        assertTrue(client.addEvents("o/r", "t", 9));
+
+        assertEquals(List.of("PATCH /repos/o/r/hooks/9"), calls);
+        String body = bodies.get(0);
+        assertTrue(body.contains("\"add_events\":[\"push\",\"pull_request\",\"issues\"]"), body);
+        assertTrue(!body.contains("secret") && !body.contains("config"), "anahtar/adres değişmemeli: " + body);
+
+        patchStatus = 404;
+        assertTrue(!client.addEvents("o/r", "t", 9));
     }
 
     @Test
