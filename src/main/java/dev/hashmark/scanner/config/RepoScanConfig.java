@@ -27,20 +27,43 @@ import java.util.regex.Pattern;
  * labels:
  *   custom: [SECURITY, OPTIMIZE]   # borç sayılan ek etiketler
  *   disable: [NOTE, INFO]          # kaydedilmeyen etiketler
+ * pr:                              # pull request kontrolü (otomatik tarama açıkken)
+ *   comment: true                  # PR'a borç raporu yorumu (varsayılan: açık)
+ *   status: true                   # commit durumu "hashmark/debt-budget" (varsayılan: açık)
+ *   budget:
+ *     max-new: 5                   # PR'ın ekleyebileceği en fazla yeni borç (yoksa sınırsız)
+ *     labels: {FIXME: 0, HACK: 0}  # etiket başına sınır
  * </pre>
  *
  * <p>Dosya hatalıysa tarama durmaz: geçersiz kısım yok sayılır, sebep {@link #warnings()} ile iş mesajına
  * yazılır. Hata metinlerine dosya içeriği konmaz (veri minimizasyonu); yalnızca anahtar adı ve satır.
  */
 public record RepoScanConfig(List<String> include, List<String> exclude, List<String> customLabels,
-                             Set<String> disabledLabels, List<String> warnings) {
+                             Set<String> disabledLabels, PrSettings pr, List<String> warnings) {
+
+    /**
+     * @param maxNew      PR başına en fazla yeni borç; {@code null} = sınırsız
+     * @param labelBudget etiket → en fazla yeni borç
+     */
+    public record PrSettings(boolean comment, boolean status, Integer maxNew, Map<String, Integer> labelBudget) {
+        public static final PrSettings DEFAULT = new PrSettings(true, true, null, Map.of());
+
+        public PrSettings {
+            labelBudget = Map.copyOf(labelBudget);
+        }
+
+        public boolean hasBudget() {
+            return maxNew != null || !labelBudget.isEmpty();
+        }
+    }
 
     public static final String FILE_NAME = ".hashmark.yml";
 
     public static final Set<String> BUILTIN_DEBT_LABELS = Set.of("TODO", "FIXME", "HACK", "XXX");
     public static final Set<String> INFO_LABELS = Set.of("NOTE", "DOC", "INFO");
 
-    public static final RepoScanConfig DEFAULT = new RepoScanConfig(List.of(), List.of(), List.of(), Set.of(), List.of());
+    public static final RepoScanConfig DEFAULT =
+            new RepoScanConfig(List.of(), List.of(), List.of(), Set.of(), PrSettings.DEFAULT, List.of());
 
     static final int MAX_FILE_CHARS = 64 * 1024;
     static final int MAX_PATTERNS = 100;
@@ -49,14 +72,18 @@ public record RepoScanConfig(List<String> include, List<String> exclude, List<St
 
     /** debts.label VARCHAR(10); harfle başlar, büyük harf/rakam/alt çizgi. */
     private static final Pattern LABEL_NAME = Pattern.compile("^[A-Z][A-Z0-9_]{1,9}$");
-    private static final Set<String> TOP_LEVEL_KEYS = Set.of("version", "include", "exclude", "labels");
+    private static final Set<String> TOP_LEVEL_KEYS = Set.of("version", "include", "exclude", "labels", "pr");
     private static final Set<String> LABEL_KEYS = Set.of("custom", "disable");
+    private static final Set<String> PR_KEYS = Set.of("comment", "status", "budget");
+    private static final Set<String> BUDGET_KEYS = Set.of("max-new", "labels");
+    static final int MAX_BUDGET = 10_000;
 
     public RepoScanConfig {
         include = List.copyOf(include);
         exclude = List.copyOf(exclude);
         customLabels = List.copyOf(customLabels);
         disabledLabels = Set.copyOf(disabledLabels);
+        pr = pr == null ? PrSettings.DEFAULT : pr;
         warnings = List.copyOf(warnings);
     }
 
@@ -113,7 +140,78 @@ public record RepoScanConfig(List<String> include, List<String> exclude, List<St
                 warnings.add("'labels' must be a mapping");
             }
         }
-        return new RepoScanConfig(include, exclude, custom, disabled, warnings);
+        PrSettings pr = prSettings(map.get("pr"), custom, warnings);
+        return new RepoScanConfig(include, exclude, custom, disabled, pr, warnings);
+    }
+
+    private static PrSettings prSettings(Object value, List<String> custom, List<String> warnings) {
+        if (value == null) {
+            return PrSettings.DEFAULT;
+        }
+        if (!(value instanceof Map<?, ?> map)) {
+            warnings.add("'pr' must be a mapping");
+            return PrSettings.DEFAULT;
+        }
+        unknownKeys(map, PR_KEYS, "pr.", warnings);
+        boolean comment = bool(map.get("comment"), true, "pr.comment", warnings);
+        boolean status = bool(map.get("status"), true, "pr.status", warnings);
+
+        Integer maxNew = null;
+        Map<String, Integer> labelBudget = new java.util.TreeMap<>();
+        Object budget = map.get("budget");
+        if (budget instanceof Map<?, ?> budgetMap) {
+            unknownKeys(budgetMap, BUDGET_KEYS, "pr.budget.", warnings);
+            maxNew = budgetValue(budgetMap.get("max-new"), "pr.budget.max-new", warnings);
+            Object labels = budgetMap.get("labels");
+            if (labels instanceof Map<?, ?> labelMap) {
+                for (Map.Entry<?, ?> e : labelMap.entrySet()) {
+                    String name = String.valueOf(e.getKey()).trim().toUpperCase(Locale.ROOT);
+                    if (!BUILTIN_DEBT_LABELS.contains(name) && !custom.contains(name)) {
+                        warnings.add("pr.budget.labels: '" + clip(String.valueOf(e.getKey())) + "' is not a debt label");
+                        continue;
+                    }
+                    Integer limit = budgetValue(e.getValue(), "pr.budget.labels." + name, warnings);
+                    if (limit != null) {
+                        labelBudget.put(name, limit);
+                    }
+                }
+            } else if (labels != null) {
+                warnings.add("'pr.budget.labels' must be a mapping");
+            }
+        } else if (budget != null) {
+            warnings.add("'pr.budget' must be a mapping");
+        }
+        return new PrSettings(comment, status, maxNew, labelBudget);
+    }
+
+    private static void unknownKeys(Map<?, ?> map, Set<String> allowed, String prefix, List<String> warnings) {
+        for (Object key : map.keySet()) {
+            if (!allowed.contains(String.valueOf(key))) {
+                warnings.add("unknown key '" + prefix + clip(String.valueOf(key)) + "'");
+            }
+        }
+    }
+
+    private static boolean bool(Object value, boolean fallback, String key, List<String> warnings) {
+        if (value == null) {
+            return fallback;
+        }
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        warnings.add("'" + key + "' must be true or false");
+        return fallback;
+    }
+
+    private static Integer budgetValue(Object value, String key, List<String> warnings) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Integer n && n >= 0 && n <= MAX_BUDGET) {
+            return n;
+        }
+        warnings.add("'" + key + "' must be a whole number between 0 and " + MAX_BUDGET);
+        return null;
     }
 
     public boolean isEmpty() {
@@ -132,7 +230,8 @@ public record RepoScanConfig(List<String> include, List<String> exclude, List<St
 
     /** Kullanılamayan dosya: varsayılan yapılandırma + sebep. */
     public static RepoScanConfig invalid(String reason) {
-        return new RepoScanConfig(List.of(), List.of(), List.of(), Set.of(), List.of(reason + "; file ignored"));
+        return new RepoScanConfig(List.of(), List.of(), List.of(), Set.of(), PrSettings.DEFAULT,
+                List.of(reason + "; file ignored"));
     }
 
     private static List<String> patterns(Object value, String key, List<String> warnings) {

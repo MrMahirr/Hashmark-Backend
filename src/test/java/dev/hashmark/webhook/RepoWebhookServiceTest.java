@@ -81,6 +81,6 @@ class RepoWebhookServiceTest {
 
         service.enable(1L, 5L);
 
-        verify(repos).updateWebhookId(5L, 1L, 42L);
+        verify(repos).updateWebhookId(5L, 1L, 42L, GitHubHookClient.EVENTS_VERSION);
     }
 }

@@ -34,12 +34,19 @@ public class GitHubHookClient {
     private final GitHubHttpClient http;
     private final ObjectMapper mapper = JsonMapper.builder().build();
 
+    /**
+     * Hook'un abone olduğu olaylar. Değişirse {@link #EVENTS_VERSION} artırılır; eski hook'lar
+     * {@code WebhookUpgradeJob} ile {@link #addEvents} üzerinden yükseltilir (repos.webhook_version).
+     */
+    public static final List<String> EVENTS = List.of("push", "pull_request", "issues");
+    public static final int EVENTS_VERSION = 2;
+
     public GitHubHookClient(GitHubHttpClient http) {
         this.http = http;
     }
 
     /**
-     * Yalnızca {@code push} olayına abone, JSON gövdeli hook oluşturur. Aynı adreste hook zaten varsa (422)
+     * Yalnızca {@link #EVENTS} olaylarına abone, JSON gövdeli hook oluşturur. Aynı adreste hook zaten varsa (422)
      * onu bulup anahtarını günceller.
      *
      * @return hook kimliği
@@ -48,7 +55,7 @@ public class GitHubHookClient {
         String body = json(Map.of(
                 "name", "web",
                 "active", true,
-                "events", List.of("push"),
+                "events", EVENTS,
                 "config", config(url, secret)));
         HttpResponse<InputStream> response = http.send(http.request(hooksUri(repoFullName, ""), token)
                 .header("Content-Type", "application/json")
@@ -73,12 +80,35 @@ public class GitHubHookClient {
 
     /** @return hook hâlâ varsa ve güncellendiyse true; GitHub'da silinmişse (404) false */
     public boolean updateSecret(String repoFullName, String token, long hookId, String url, String secret) {
-        String body = json(Map.of("active", true, "events", List.of("push"), "config", config(url, secret)));
+        String body = json(Map.of("active", true, "events", EVENTS, "config", config(url, secret)));
         HttpResponse<InputStream> response = http.send(http.request(hooksUri(repoFullName, "/" + hookId), token)
                 .header("Content-Type", "application/json")
                 .timeout(Duration.ofSeconds(20))
                 .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
                 .build(), Lane.INTERACTIVE);
+        int status = response.statusCode();
+        closeQuietly(response.body());
+        if (status == 200) {
+            return true;
+        }
+        if (status == 404) {
+            return false;
+        }
+        throw failure(status);
+    }
+
+    /**
+     * Var olan hook'a eksik olayları ekler (anahtara ve adrese dokunmaz). Arka plan işinden çağrılır.
+     *
+     * @return güncellendiyse true; hook GitHub'da yoksa (404) false
+     */
+    public boolean addEvents(String repoFullName, String token, long hookId) {
+        String body = json(Map.of("add_events", EVENTS, "active", true));
+        HttpResponse<InputStream> response = http.send(http.request(hooksUri(repoFullName, "/" + hookId), token)
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(20))
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
+                .build(), Lane.SCAN);
         int status = response.statusCode();
         closeQuietly(response.body());
         if (status == 200) {

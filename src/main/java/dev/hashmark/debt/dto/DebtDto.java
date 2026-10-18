@@ -43,4 +43,9 @@ public class DebtDto {
     private String authorLogin;
     private String authorName;
     private LocalDateTime introducedAt;
+    /** Hashmark'ın bu borç için açtığı GitHub issue (yoksa null) */
+    private Integer githubIssueNumber;
+    private String githubIssueUrl;
+    /** open | closed */
+    private String githubIssueState;
 }

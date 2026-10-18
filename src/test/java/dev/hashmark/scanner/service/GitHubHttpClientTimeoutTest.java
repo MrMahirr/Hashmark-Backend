@@ -34,6 +34,9 @@ class GitHubHttpClientTimeoutTest {
             ex.sendResponseHeaders(200, -1);
             ex.close();
         });
+        // Her deneme geldiği anda sayılsın: tek iş parçacıklı sunucuda yeniden denemeler önceki 2 sn'lik yanıtın
+        // arkasında sıraya girer ve jitter'lı geri çekilme kısa gelince 4. deneme sayılmadan test biterdi (dalgalı).
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         server.start();
     }
 

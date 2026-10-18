@@ -31,6 +31,7 @@ public class LoadSheddingFilter extends OncePerRequestFilter {
 
     private static final Pattern CONTEXT_PATH = Pattern.compile("^/debts/[^/]+/context$");
     private static final Pattern AUTO_SCAN_PATH = Pattern.compile("^/repos/[^/]+/auto-scan$");
+    private static final Pattern ISSUE_PATH = Pattern.compile("^/debts/([^/]+/issue|issues)$");
 
     private final boolean enabled;
     private final int dbPendingThreshold;
@@ -88,7 +89,8 @@ public class LoadSheddingFilter extends OncePerRequestFilter {
         String method = request.getMethod();
         String path = request.getRequestURI();
         if ("POST".equalsIgnoreCase(method)) {
-            return path.startsWith("/scan") || "/repos/sync".equals(path) || "/report/send-test".equals(path);
+            return path.startsWith("/scan") || "/repos/sync".equals(path) || "/report/send-test".equals(path)
+                    || ISSUE_PATH.matcher(path).matches();
         }
         if ("GET".equalsIgnoreCase(method)) {
             return "/debts/export".equals(path) || CONTEXT_PATH.matcher(path).matches();
