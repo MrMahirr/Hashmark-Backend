@@ -3,6 +3,7 @@ package dev.hashmark.webhook;
 import dev.hashmark.common.exception.ApiException;
 import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.common.util.AesEncryptionUtil;
+import dev.hashmark.pr.GitHubPullRequestClient;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.service.ScanService;
@@ -14,6 +15,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.Set;
+
 /**
  * GitHub teslimatını işler. İstek kimliksizdir: depo sistem kapsamında bulunur, imza depo anahtarıyla
  * doğrulanır, iş yalnızca depo sahibinin kapsamında kuyruğa alınır (RLS).
@@ -24,64 +27,111 @@ public class GitHubWebhookService {
     private static final Logger log = LoggerFactory.getLogger(GitHubWebhookService.class);
     private static final String BRANCH_REF_PREFIX = "refs/heads/";
 
-    /** @param result pong | queued | coalesced | already_queued | ignored | skipped */
+    /** @param result pong | queued | coalesced | already_queued | ignored | skipped | duplicate */
     public record Delivery(String result, Long jobId, String reason) {
         static Delivery ignored(String reason) {
             return new Delivery("ignored", null, reason);
         }
+
+        static Delivery of(ScanService.AutoScanResult r) {
+            return new Delivery(r.outcome().toLowerCase(java.util.Locale.ROOT), r.jobId(), r.reason());
+        }
     }
+
+    /** Kontrol edilen PR olayları: açılış, yeni commit, yeniden açılış, taslaktan çıkış. */
+    static final Set<String> PR_ACTIONS = Set.of("opened", "synchronize", "reopened", "ready_for_review");
 
     private final RepoRepository repoRepository;
     private final AesEncryptionUtil aes;
     private final ScanService scanService;
+    private final WebhookDeliveryRepository deliveries;
     private final ObjectMapper mapper = JsonMapper.builder().build();
 
-    public GitHubWebhookService(RepoRepository repoRepository, AesEncryptionUtil aes, ScanService scanService) {
+    public GitHubWebhookService(RepoRepository repoRepository, AesEncryptionUtil aes, ScanService scanService,
+                                WebhookDeliveryRepository deliveries) {
         this.repoRepository = repoRepository;
         this.aes = aes;
         this.scanService = scanService;
+        this.deliveries = deliveries;
+    }
+
+    public Delivery handle(long repoId, String event, String signature, byte[] body) {
+        return handle(repoId, event, null, signature, body);
     }
 
     /**
+     * @param deliveryId {@code X-GitHub-Delivery}; aynı kimlikle ikinci teslimat {@code duplicate} döner
      * @throws ApiException 404 (depo yok / otomatik tarama kapalı), 401 (imza geçersiz), 400 (gövde bozuk)
      */
-    public Delivery handle(long repoId, String event, String signature, byte[] body) {
+    public Delivery handle(long repoId, String event, String deliveryId, String signature, byte[] body) {
         Repo repo = TenantContext.asSystem(() -> repoRepository.findWebhookTarget(repoId))
                 .orElseThrow(() -> ApiException.notFound("Unknown webhook"));
         if (!WebhookSignature.isValid(aes.decrypt(repo.getWebhookSecret()), body, signature)) {
             throw ApiException.unauthorized("Invalid webhook signature");
         }
+        // İmzadan SONRA: doğrulanmamış istekler tekilleştirme tablosunu dolduramaz
+        if (!TenantContext.asSystem(() -> deliveries.firstSeen(deliveryId))) {
+            return new Delivery("duplicate", null, "delivery already processed");
+        }
 
         if ("ping".equals(event)) {
             return new Delivery("pong", null, null);
         }
-        if (!"push".equals(event)) {
+        if (!"push".equals(event) && !"pull_request".equals(event)) {
             return Delivery.ignored("event '" + clip(event) + "' is not handled");
         }
 
-        JsonNode push;
+        JsonNode payload;
         try {
-            push = mapper.readTree(body);
+            payload = mapper.readTree(body);
         } catch (JacksonException e) {
             throw ApiException.badRequest("Malformed webhook payload");
         }
-        String ignoreReason = ignoreReason(repo, push);
+        if ("pull_request".equals(event)) {
+            return handlePullRequest(repo, payload);
+        }
+
+        String ignoreReason = ignoreReason(repo, payload);
         if (ignoreReason != null) {
             return Delivery.ignored(ignoreReason);
         }
-
         ScanService.AutoScanResult queued = TenantContext.asUser(repo.getUserId(),
                 () -> scanService.enqueueAutomatic(repo));
         log.info("Push webhook for repo {}: {}", repo.getId(), queued.outcome());
-        return new Delivery(queued.outcome().toLowerCase(java.util.Locale.ROOT), queued.jobId(), queued.reason());
+        return Delivery.of(queued);
+    }
+
+    private Delivery handlePullRequest(Repo repo, JsonNode payload) {
+        if (!sameRepository(repo, payload)) {
+            return Delivery.ignored("repository does not match");
+        }
+        String action = payload.path("action").asText("");
+        if (!PR_ACTIONS.contains(action)) {
+            return Delivery.ignored("pull request action '" + clip(action) + "' is not checked");
+        }
+        JsonNode pr = payload.path("pull_request");
+        int number = pr.path("number").asInt(0);
+        String head = pr.path("head").path("sha").asText("");
+        String base = pr.path("base").path("sha").asText("");
+        if (number <= 0 || !GitHubPullRequestClient.isSha(head) || !GitHubPullRequestClient.isSha(base)) {
+            throw ApiException.badRequest("Malformed pull request payload");
+        }
+        ScanService.AutoScanResult queued = TenantContext.asUser(repo.getUserId(),
+                () -> scanService.enqueuePrCheck(repo, number, head, base));
+        log.info("Pull request webhook for repo {} PR #{}: {}", repo.getId(), number, queued.outcome());
+        return Delivery.of(queued);
+    }
+
+    private static boolean sameRepository(Repo repo, JsonNode payload) {
+        String githubId = payload.path("repository").path("id").asText("");
+        return repo.getGithubRepoId() == null || repo.getGithubRepoId().equals(githubId);
     }
 
     /** @return push taranmayacaksa sebebi, taranacaksa null */
     static String ignoreReason(Repo repo, JsonNode push) {
         JsonNode repository = push.path("repository");
         // Hook başka bir depoya taşınmış/kopyalanmışsa (aynı adres, aynı anahtar) yanlış depo taranmasın
-        String githubId = repository.path("id").asText("");
-        if (repo.getGithubRepoId() != null && !repo.getGithubRepoId().equals(githubId)) {
+        if (!sameRepository(repo, push)) {
             return "repository does not match";
         }
         if (push.path("deleted").asBoolean(false)) {

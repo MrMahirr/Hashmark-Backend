@@ -56,7 +56,7 @@ public class RepoWebhookService {
             long hookId = existing != null && hooks.updateSecret(repo.getFullName(), token, existing, url, secret)
                     ? existing
                     : hooks.createOrAdopt(repo.getFullName(), token, url, secret);
-            repoRepository.updateWebhookId(repoId, userId, hookId);
+            repoRepository.updateWebhookId(repoId, userId, hookId, GitHubHookClient.EVENTS_VERSION);
         } catch (RuntimeException e) {
             if (repo.getWebhookId() == null) {
                 repoRepository.clearWebhook(repoId, userId);

@@ -105,6 +105,23 @@ public class ScanService {
         }
     }
 
+    /**
+     * PR borç kontrolünü kuyruğa alır (depo sahibinin kapsamında). Tarama kotalarına tabi değildir: yalnızca
+     * değişen dosyalar okunur; aynı PR'a art arda gelen push'lar bekleyen tek kontrolde birleşir.
+     */
+    public AutoScanResult enqueuePrCheck(Repo repo, int prNumber, String headSha, String baseSha) {
+        if (consentService.isProcessingBlocked(repo.getUserId())) {
+            return AutoScanResult.skipped("consent required");
+        }
+        try {
+            consentService.requirePrivateRepoAck(repo);
+        } catch (ApiException e) {
+            return AutoScanResult.skipped("private repository notice not confirmed");
+        }
+        ScanJob job = scanJobRepository.enqueuePrCheck(repo.getId(), repo.getUserId(), prNumber, headSha, baseSha);
+        return new AutoScanResult("QUEUED", job.getId(), null);
+    }
+
     public ScanJob getScanStatus(Long repoId, Long userId) {
         repoRepository.findByIdAndUserId(repoId, userId)
                 .orElseThrow(() -> ApiException.notFound("Repo not found or not owned by user"));

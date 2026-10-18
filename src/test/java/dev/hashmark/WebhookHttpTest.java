@@ -95,11 +95,18 @@ class WebhookHttpTest {
     }
 
     private MvcResult deliver(long repo, String event, String body, String secret) throws Exception {
+        return deliver(repo, event, body, secret, null);
+    }
+
+    private MvcResult deliver(long repo, String event, String body, String secret, String deliveryId) throws Exception {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         var request = post("/webhooks/github/" + repo)
                 .header("X-GitHub-Event", event)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(bytes);
+        if (deliveryId != null) {
+            request.header("X-GitHub-Delivery", deliveryId);
+        }
         if (secret != null) {
             request.header("X-Hub-Signature-256", WebhookSignature.sign(secret, bytes));
         }
@@ -182,6 +189,76 @@ class WebhookHttpTest {
 
         assertTrue(deliver(repoId, "push", other, SECRET).getResponse().getContentAsString().contains("does not match"));
         assertEquals(0, jobs("PENDING"));
+    }
+
+    private String pullRequest(String action, int number, String head) {
+        return "{\"action\":\"" + action + "\",\"number\":" + number + ","
+                + "\"pull_request\":{\"number\":" + number + ",\"head\":{\"sha\":\"" + head + "\"},"
+                + "\"base\":{\"sha\":\"" + "b".repeat(40) + "\"}},"
+                + "\"repository\":{\"id\":" + githubRepoId + ",\"default_branch\":\"main\"}}";
+    }
+
+    private int prJobs(String status) {
+        return jdbc.queryForObject("SELECT count(*) FROM scan_jobs WHERE repo_id = ? AND kind = 'PR' AND status = ?",
+                Integer.class, repoId, status);
+    }
+
+    @Test
+    void pullRequestQueuesOneCheckPerPrAlongsideScans() throws Exception {
+        // Depoda çalışan bir tarama varken de PR kontrolü kuyruğa girer (V17: tür başına indeks)
+        jdbc.update("INSERT INTO scan_jobs (repo_id, user_id, status) SELECT id, user_id, 'RUNNING' FROM repos WHERE id = ?",
+                repoId);
+
+        MvcResult opened = deliver(repoId, "pull_request", pullRequest("opened", 7, "1".repeat(40)), SECRET);
+        assertEquals(202, opened.getResponse().getStatus(), opened.getResponse().getContentAsString());
+        assertTrue(opened.getResponse().getContentAsString().contains("\"queued\""));
+
+        // Aynı PR'a yeni commit: bekleyen tek kontrol en son commit'e güncellenir
+        deliver(repoId, "pull_request", pullRequest("synchronize", 7, "2".repeat(40)), SECRET);
+        assertEquals(1, prJobs("PENDING"));
+        assertEquals("2".repeat(40), jdbc.queryForObject(
+                "SELECT pr_head_sha FROM scan_jobs WHERE repo_id = ? AND kind = 'PR'", String.class, repoId));
+        assertEquals("PULL_REQUEST", jdbc.queryForObject(
+                "SELECT triggered_by FROM scan_jobs WHERE repo_id = ? AND kind = 'PR'", String.class, repoId));
+
+        // Başka PR ayrı kontrol; kapanan PR kontrol edilmez
+        deliver(repoId, "pull_request", pullRequest("opened", 8, "3".repeat(40)), SECRET);
+        assertTrue(deliver(repoId, "pull_request", pullRequest("closed", 9, "4".repeat(40)), SECRET)
+                .getResponse().getContentAsString().contains("not checked"));
+        assertEquals(2, prJobs("PENDING"));
+
+        // Tarama durumu ucu PR işini "son tarama" sanmaz
+        long userId = jdbc.queryForObject("SELECT user_id FROM repos WHERE id = ?", Long.class, repoId);
+        String status = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/scan/" + repoId + "/status").header("Authorization", "Bearer " + jwt.generateAccessToken(userId)))
+                .andReturn().getResponse().getContentAsString();
+        assertTrue(status.contains("\"kind\":\"SCAN\""), status);
+    }
+
+    @Test
+    void malformedPullRequestIsRejected() throws Exception {
+        assertEquals(400, deliver(repoId, "pull_request", pullRequest("opened", 7, "not-a-sha"), SECRET)
+                .getResponse().getStatus());
+        assertEquals(0, prJobs("PENDING"));
+    }
+
+    @Test
+    void redeliveredWebhookIsProcessedOnce() throws Exception {
+        String id = java.util.UUID.randomUUID().toString();
+
+        assertTrue(deliver(repoId, "push", push("refs/heads/main"), SECRET, id).getResponse().getContentAsString()
+                .contains("\"queued\""));
+        jdbc.update("DELETE FROM scan_jobs WHERE repo_id = ?", repoId);
+        MvcResult again = deliver(repoId, "push", push("refs/heads/main"), SECRET, id);
+
+        assertEquals(202, again.getResponse().getStatus());
+        assertTrue(again.getResponse().getContentAsString().contains("duplicate"));
+        assertEquals(0, jobs("PENDING"), "yeniden gönderim yeni iş açmamalı");
+        // İmzasız istek tekilleştirme kaydı bırakmaz
+        String other = java.util.UUID.randomUUID().toString();
+        deliver(repoId, "push", push("refs/heads/main"), "wrong", other);
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM webhook_deliveries WHERE delivery_id = ?",
+                Integer.class, other));
     }
 
     @Test

@@ -34,7 +34,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 
 /** Kuyruktan alınmış tek bir tarama işini çalıştırır. Çağıran {@link ScanJobDispatcher}'dır. */
 @Component
@@ -79,7 +78,24 @@ public class ScanJobProcessor {
         this.notificationService = notificationService;
     }
 
+    /** PR kontrolü aynı kuyruğu, fencing'i ve ertelemeyi kullanır; işi yalnızca başka işçi yürütür. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPrCheckProcessor(dev.hashmark.pr.PrCheckProcessor prCheckProcessor) {
+        this.prCheckProcessor = prCheckProcessor;
+    }
+
+    private dev.hashmark.pr.PrCheckProcessor prCheckProcessor;
+
     public void process(ScanJob job) {
+        if (job.isPrCheck()) {
+            if (prCheckProcessor != null) {
+                prCheckProcessor.process(job);
+            } else {
+                scanJobRepository.complete(job.getId(), job.getClaimToken(), "FAILED", 0, 0, 0, 0, null,
+                        "PR checks are not available");
+            }
+            return;
+        }
         long startNanos = System.nanoTime();
         String result = "failed";
         try {
@@ -180,20 +196,12 @@ public class ScanJobProcessor {
     }
 
     private boolean deferrable(ScanJob job) {
-        int deferrals = job.getDeferrals() == null ? 0 : job.getDeferrals();
-        return deferrals < scanProperties.getMaxDeferrals();
+        return JobDeferral.isDeferrable(job, scanProperties);
     }
 
-    /**
-     * Üstel geri çekilme (taban × 2^erteleme, üst sınırlı) + %0–25 jitter; GitHub'ın önerdiği bekleme
-     * (Retry-After / rate-limit sıfırlanması) daha uzunsa o kullanılır.
-     */
+    /** @see JobDeferral#delaySeconds */
     long deferDelaySeconds(ScanJob job, Long retryAfterSeconds) {
-        int deferrals = job.getDeferrals() == null ? 0 : job.getDeferrals();
-        long backoff = Math.min(scanProperties.getDeferMaxSeconds(),
-                scanProperties.getDeferBaseSeconds() << Math.min(deferrals, 20));
-        long delay = Math.max(backoff, retryAfterSeconds == null ? 0 : retryAfterSeconds);
-        return delay + ThreadLocalRandom.current().nextLong(delay / 4 + 1);
+        return JobDeferral.delaySeconds(job, retryAfterSeconds, scanProperties);
     }
 
     private void notifyScanDone(Long userId, String repoName, ReplaceResult replaced) {

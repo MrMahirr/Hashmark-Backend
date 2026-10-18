@@ -35,9 +35,10 @@ public class WebhookController {
             @PathVariable long repoId,
             @RequestHeader(value = "X-GitHub-Event", required = false) String event,
             @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature,
+            @RequestHeader(value = "X-GitHub-Delivery", required = false) String deliveryId,
             HttpServletRequest request) throws IOException {
         byte[] body = readLimited(request, properties.getMaxPayloadBytes());
-        GitHubWebhookService.Delivery delivery = webhookService.handle(repoId, event, signature, body);
+        GitHubWebhookService.Delivery delivery = webhookService.handle(repoId, event, deliveryId, signature, body);
         HttpStatus status = "pong".equals(delivery.result()) ? HttpStatus.OK : HttpStatus.ACCEPTED;
         return ResponseEntity.status(status).body(delivery);
     }
