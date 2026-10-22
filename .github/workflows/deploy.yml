@@ -38,11 +38,23 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        # Secret Windows'tan (Not Defteri) yapıştırılınca CRLF ya da baştaki/sondaki boşluklar gelebilir:
+        # OpenSSH bunu "error in libcrypto" ile reddeder. \r temizlenir, anahtar kullanmadan önce doğrulanır.
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | sed '/^$/d' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null 2>&1; then
+            # Sırrın kendisi basılmaz; yalnızca biçim ipuçları
+            echo "::error::PROD_SSH_KEY okunamadı. Satır sayısı: $(wc -l < ~/.ssh/deploy_key)."
+            head -1 ~/.ssh/deploy_key | grep -q '^-----BEGIN OPENSSH PRIVATE KEY-----$' \
+              || echo "::error::İlk satır '-----BEGIN OPENSSH PRIVATE KEY-----' değil (açık anahtar ya da eksik kopya olabilir)."
+            tail -1 ~/.ssh/deploy_key | grep -q '^-----END OPENSSH PRIVATE KEY-----$' \
+              || echo "::error::Son satır '-----END OPENSSH PRIVATE KEY-----' değil (kopya yarım kalmış olabilir)."
+            exit 1
+          fi
+          echo "Anahtar geçerli: $(ssh-keygen -l -f ~/.ssh/deploy_key | awk '{print $2, $NF}')"
 
       - name: Dağıt
         env:
