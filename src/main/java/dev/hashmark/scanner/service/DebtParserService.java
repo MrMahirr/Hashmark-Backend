@@ -60,6 +60,20 @@ public class DebtParserService {
     private static final Pattern HANDLE = Pattern.compile("^@([A-Za-z0-9_][A-Za-z0-9_.-]{0,38})\\b");
     private static final Pattern USERNAME = Pattern.compile("^@?([A-Za-z0-9_][A-Za-z0-9_.-]{0,38})$");
 
+    // Öncelik yazılmamışsa etiket + içerikteki anahtar kelimeden çıkarılır; en yüksek eşleşen kazanır.
+    // Kelime sınırı: \b ASCII dışı harflerde (ç, ö) güvenilir olmadığı için harf/rakam olmayan karakter aranır.
+    private static final String WORD_START = "(?<![\\p{L}\\p{N}_])";
+    private static final String WORD_END = "(?![\\p{L}\\p{N}_])";
+    private static final Pattern AUTO_CRITICAL = Pattern.compile(WORD_START + "(?:security|insecure|vulnerab\\p{L}*|exploit\\p{L}*"
+            + "|cve-\\d{4}-\\d+|injection|xss|csrf|rce|data[ -](?:loss|corruption)|güvenlik\\p{L}*)" + WORD_END,
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern AUTO_HIGH = Pattern.compile(WORD_START + "(?:crash\\p{L}*|deadlock\\p{L}*|race[ -]condition"
+            + "|memory[ -]leak\\p{L}*|segfault\\p{L}*|panic\\p{L}*|null[ -]?pointer|npe|regression\\p{L}*|broken|asap|çök\\p{L}*)" + WORD_END,
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern AUTO_MEDIUM = Pattern.compile(WORD_START + "(?:slow\\p{L}*|perf|performance|bottleneck\\p{L}*"
+            + "|timeout\\p{L}*|n\\+1|workaround\\p{L}*|deprecated|yavaş\\p{L}*|performans\\p{L}*)" + WORD_END,
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+
     public List<DebtDto> parse(String fileContent, String filePath) {
         return parse(fileContent, filePath, LabelRules.DEFAULT);
     }
@@ -370,6 +384,7 @@ public class DebtParserService {
     private DebtDto buildDto(String filePath, int line, String label, String rawContent, String tag) {
         // Yorumda yanlışlıkla bulunan sırlar veritabanına yazılmadan önce maskelenir.
         String content = SecretMasker.mask(rawContent);
+        boolean secret = rawContent != null && !rawContent.equals(content);
         String clipped = content.length() > MAX_CONTENT_LENGTH
                 ? content.substring(0, MAX_CONTENT_LENGTH - 1) + "…"
                 : content;
@@ -378,15 +393,17 @@ public class DebtParserService {
                 .filePath(filePath)
                 .lineNo(line)
                 .label(label)
-                .content(clipped);
+                .content(clipped)
+                .secretDetected(secret);
 
         if (tag != null || LabelRules.isDebt(label)) {
-            applyMetadata(builder, tag, content);
+            applyMetadata(builder, label, tag, content, secret);
         }
         return builder.build();
     }
 
-    private void applyMetadata(DebtDto.DebtDtoBuilder builder, String tag, String content) {
+    private void applyMetadata(DebtDto.DebtDtoBuilder builder, String label, String tag, String content,
+                               boolean secret) {
         String assignee = null;
         String priority = null;
         String issueRef = null;
@@ -438,7 +455,31 @@ public class DebtParserService {
             }
         }
 
-        builder.assignee(assignee).priority(priority).dueDate(dueDate).issueRef(issueRef);
+        boolean auto = false;
+        if (priority == null) {
+            priority = inferPriority(label, content, secret);
+            auto = priority != null;
+        }
+
+        builder.assignee(assignee).priority(priority).priorityAuto(auto).dueDate(dueDate).issueRef(issueRef);
+    }
+
+    /** Sızmış sır her zaman kritiktir; aksi halde etiket (ör. özel SECURITY) ve içerikteki anahtar kelimeler. */
+    static String inferPriority(String label, String content, boolean secret) {
+        if (secret) {
+            return "CRITICAL";
+        }
+        String text = (label == null ? "" : label) + " " + (content == null ? "" : content);
+        if (AUTO_CRITICAL.matcher(text).find()) {
+            return "CRITICAL";
+        }
+        if (AUTO_HIGH.matcher(text).find()) {
+            return "HIGH";
+        }
+        if (AUTO_MEDIUM.matcher(text).find()) {
+            return "MEDIUM";
+        }
+        return null;
     }
 
     private static String normalizePriority(String token) {

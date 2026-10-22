@@ -26,6 +26,8 @@ public class UserSettingsRepository {
             .notifyDay(rs.getString("notify_day"))
             .digestLabels(rs.getString("digest_labels"))
             .digestEmail(rs.getString("digest_email"))
+            .hourlyRate(rs.getBigDecimal("hourly_rate"))
+            .currency(rs.getString("currency"))
             .lastDigestSentOn(rs.getDate("last_digest_sent_on") != null ? rs.getDate("last_digest_sent_on").toLocalDate() : null)
             .createdAt(rs.getTimestamp("created_at").toLocalDateTime())
             .build();
@@ -36,11 +38,12 @@ public class UserSettingsRepository {
     }
 
     public UserSettings save(UserSettings settings) {
-        String sql = "INSERT INTO user_settings (user_id, email_notify, notify_day, digest_labels, digest_email) " +
-                     "VALUES (?, ?, ?, ?, ?) " +
+        String sql = "INSERT INTO user_settings (user_id, email_notify, notify_day, digest_labels, digest_email, " +
+                     "hourly_rate, currency) VALUES (?, ?, ?, ?, ?, ?, ?) " +
                      "ON CONFLICT (user_id) DO UPDATE " +
                      "SET email_notify = EXCLUDED.email_notify, notify_day = EXCLUDED.notify_day, " +
-                     "digest_labels = EXCLUDED.digest_labels, digest_email = EXCLUDED.digest_email " +
+                     "digest_labels = EXCLUDED.digest_labels, digest_email = EXCLUDED.digest_email, " +
+                     "hourly_rate = EXCLUDED.hourly_rate, currency = EXCLUDED.currency " +
                      "RETURNING *";
         return jdbcTemplate.queryForObject(
                 sql,
@@ -49,7 +52,9 @@ public class UserSettingsRepository {
                 settings.getEmailNotify(),
                 settings.getNotifyDay(),
                 settings.getDigestLabels(),
-                settings.getDigestEmail()
+                settings.getDigestEmail(),
+                settings.getHourlyRate(),
+                settings.getCurrency()
         );
     }
 

@@ -243,6 +243,8 @@ public class ScanJobProcessor {
                     .occurrence(occurrence)
                     .parsedAssignee(dto.getAssignee())
                     .priority(dto.getPriority())
+                    .priorityAuto(Boolean.TRUE.equals(dto.getPriorityAuto()))
+                    .secretDetected(Boolean.TRUE.equals(dto.getSecretDetected()))
                     .dueDate(dto.getDueDate())
                     .issueRef(dto.getIssueRef())
                     .build());

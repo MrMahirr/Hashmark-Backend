@@ -8,6 +8,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -191,6 +192,68 @@ class DebtParserServiceTest {
         assertNull(dto.getPriority());
         assertNull(dto.getDueDate());
         assertNull(dto.getIssueRef());
+    }
+
+    @Test
+    void infersPriorityFromKeywordsWhenNotWritten() {
+        String input = """
+                // TODO: sanitize input, SQL injection risk
+                // FIXME: app crashes on empty list
+                // TODO: this query is slow (N+1)
+                // HACK: güvenlik kontrolü atlanıyor
+                // TODO: perfect the wording
+                // FIXME[P3]: security review later
+                """;
+
+        List<DebtDto> debts = parser.parse(input, "A.java");
+
+        assertEquals("CRITICAL", debts.get(0).getPriority());
+        assertTrue(debts.get(0).getPriorityAuto());
+        assertEquals("HIGH", debts.get(1).getPriority());
+        assertEquals("MEDIUM", debts.get(2).getPriority());
+        assertEquals("CRITICAL", debts.get(3).getPriority());
+        // "perf" kelime içinde eşleşmez
+        assertNull(debts.get(4).getPriority());
+        assertFalse(debts.get(4).getPriorityAuto());
+        // Yazılan öncelik anahtar kelimeden önce gelir
+        assertEquals("LOW", debts.get(5).getPriority());
+        assertFalse(debts.get(5).getPriorityAuto());
+    }
+
+    @Test
+    void customLabelNameCountsAsKeyword() {
+        RepoScanConfig config = RepoScanConfig.parse("labels:\n  custom: [SECURITY]\n");
+        DebtDto dto = parser.parse("// SECURITY: rotate keys\n", "A.java", LabelRules.of(config)).get(0);
+
+        assertEquals("CRITICAL", dto.getPriority());
+        assertTrue(dto.getPriorityAuto());
+    }
+
+    @Test
+    void leakedSecretIsFlaggedMaskedAndCritical() {
+        List<DebtDto> debts = parser.parse("""
+                // TODO: remove api_key = sk_live_abcdefghijklmnop1234
+                // TODO: hash the password before storing
+                """, "A.java");
+
+        DebtDto leaked = debts.get(0);
+        assertTrue(leaked.getSecretDetected());
+        assertTrue(leaked.getContent().contains("[REDACTED]"));
+        assertEquals("CRITICAL", leaked.getPriority());
+        assertTrue(leaked.getPriorityAuto());
+
+        // Parolayı anmak sır sızıntısı değildir
+        assertFalse(debts.get(1).getSecretDetected());
+        assertNull(debts.get(1).getPriority());
+    }
+
+    @Test
+    void secretInNoteIsFlaggedWithoutPriority() {
+        DebtDto dto = parser.parse("// token: ghp_abcdefghijklmnopqrstuvwxyz0123\n", "A.java").get(0);
+
+        assertEquals("NOTE", dto.getLabel());
+        assertTrue(dto.getSecretDetected());
+        assertNull(dto.getPriority());
     }
 
     @Test
