@@ -1,12 +1,36 @@
 version: 2
+
+# PR'lar dev'e açılır: master'a birleşen her şey otomatik olarak üretime dağıtılır (deploy.yml).
+# Küçük/yama güncellemeleri tek PR'da gruplanır; büyük sürümler ayrı PR olarak gelir ve elle incelenir.
 updates:
   - package-ecosystem: maven
     directory: /
+    target-branch: dev
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
+    groups:
+      maven-minor-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: docker
     directory: /
+    target-branch: dev
     schedule: { interval: weekly }
+
+  # PostgreSQL ana sürüm yükseltmesi döküm + geri yükleme ister (bkz. DEPLOYMENT.md "PostgreSQL 16 → 18"):
+  # yalnızca 18.x içi güncellemeler önerilir.
+  - package-ecosystem: docker
+    directory: /postgres
+    target-branch: dev
+    schedule: { interval: weekly }
+    ignore:
+      - dependency-name: postgres
+        update-types: [version-update:semver-major]
+
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule: { interval: weekly }
+    groups:
+      actions:
+        patterns: ["*"]
