@@ -11,10 +11,13 @@ import dev.hashmark.debt.dto.ReplaceResult;
 import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.notification.repository.NotificationRepository;
+import dev.hashmark.report.dto.DebtInsights;
 import dev.hashmark.report.dto.TrendDataPoint;
 import dev.hashmark.report.repository.ReportRepository;
 import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.job.ScanResultWriter;
+import dev.hashmark.settings.model.UserSettings;
+import dev.hashmark.settings.repository.UserSettingsRepository;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -29,6 +32,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -348,6 +352,66 @@ class DatabaseIntegrationTest {
         d.setParsedAssignee("baska");
         scan("b".repeat(40), List.of(d));
         assertEquals("elle", debts.findByIdForUser(userId, dto.getId()).orElseThrow().getAssignee());
+    }
+
+    @Test
+    void insightsCountAgePriorityAndSecretsOfOpenDebtsOnly() {
+        migrateAll();
+        Debt old = debt("A.java", 1, "FIXME", "old crash");
+        old.setPriority("HIGH");
+        old.setPriorityAuto(true);
+        Debt leaked = debt("A.java", 2, "TODO", "key [REDACTED]");
+        leaked.setPriority("CRITICAL");
+        leaked.setPriorityAuto(true);
+        leaked.setSecretDetected(true);
+        Debt leakedNote = debt("A.java", 3, "NOTE", "token [REDACTED]");
+        leakedNote.setSecretDetected(true);
+        scan("a".repeat(40), List.of(old, leaked, leakedNote, debt("B.java", 1, "TODO", "ignored one")));
+        jdbc.update("UPDATE debts SET introduced_at = NOW() - INTERVAL '200 days' WHERE content = 'old crash'");
+        long ignored = jdbc.queryForObject("SELECT id FROM debts WHERE content = 'ignored one'", Long.class);
+        debts.updateTriage(userId, ignored, "IGNORED", null);
+
+        DebtInsights insights = reports.getInsights(userId, null).build(new BigDecimal("10"), "EUR");
+        assertEquals(2, insights.getOpenDebts());
+        assertEquals(1, insights.getStaleCount());
+        assertEquals(1, insights.getAgeBuckets().get(3).count());
+        assertEquals(2, insights.getAutoPriorityCount());
+        // NOTE borç sayılmaz ama içindeki sır sayılır
+        assertEquals(2, insights.getSecretCount());
+        assertEquals(1, insights.getPriorityCounts().get("CRITICAL"));
+        // FIXME 2×1.5 + TODO 1×2
+        assertEquals(5.0, insights.getWeightedDebt());
+        assertEquals(new BigDecimal("60"), insights.getEstimatedCost());
+
+        DebtFilterRequest secretOnly = new DebtFilterRequest();
+        secretOnly.setSecret(true);
+        secretOnly.setLabel("TODO");
+        DebtDto dto = debts.findByFilter(userId, secretOnly).getContent().get(0);
+        assertTrue(dto.getSecretDetected());
+        assertTrue(dto.getPriorityAuto());
+
+        DebtFilterRequest staleDebts = new DebtFilterRequest();
+        staleDebts.setDebtOnly(true);
+        staleDebts.setStatus("open");
+        staleDebts.setOlderThanDays(90);
+        assertEquals((long) insights.getStaleCount(), debts.findByFilter(userId, staleDebts).getTotalElements());
+
+        // Sır kaldırılınca bir sonraki tarama işareti siler
+        leaked.setSecretDetected(false);
+        scan("b".repeat(40), List.of(old, leaked));
+        assertEquals(0, reports.getInsights(userId, repoId).build(null, null).getSecretCount());
+    }
+
+    @Test
+    void hourlyRateAndCurrencyArePersisted() {
+        migrateAll();
+        UserSettingsRepository settings = new UserSettingsRepository(jdbc);
+        settings.save(UserSettings.builder().userId(userId).emailNotify(true).notifyDay("MONDAY")
+                .hourlyRate(new BigDecimal("42.50")).currency("TRY").build());
+
+        UserSettings loaded = settings.findByUserId(userId).orElseThrow();
+        assertEquals(new BigDecimal("42.50"), loaded.getHourlyRate());
+        assertEquals("TRY", loaded.getCurrency());
     }
 
     @Test

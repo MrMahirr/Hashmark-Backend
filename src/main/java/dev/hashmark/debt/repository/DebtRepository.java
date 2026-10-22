@@ -68,6 +68,8 @@ public class DebtRepository {
                 .triageStatus(rs.getString("triage_status"))
                 .assignee(manual != null ? manual : rs.getString("parsed_assignee"))
                 .priority(rs.getString("priority"))
+                .priorityAuto(rs.getBoolean("priority_auto"))
+                .secretDetected(rs.getBoolean("secret_detected"))
                 .dueDate(due != null ? due.toLocalDate() : null)
                 .issueRef(rs.getString("issue_ref"))
                 .authorLogin(rs.getString("author_login"))
@@ -127,13 +129,14 @@ public class DebtRepository {
         }
 
         String sql = "INSERT INTO debts (repo_id, file_path, line_no, label, content, fingerprint, occurrence, " +
-                     "last_seen_at, last_seen_sha, parsed_assignee, priority, due_date, issue_ref) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                     "last_seen_at, last_seen_sha, parsed_assignee, priority, due_date, issue_ref, priority_auto, secret_detected) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                      "ON CONFLICT (repo_id, file_path, fingerprint, occurrence) DO UPDATE SET " +
                      "line_no = EXCLUDED.line_no, label = EXCLUDED.label, content = EXCLUDED.content, " +
                      "last_seen_at = EXCLUDED.last_seen_at, last_seen_sha = EXCLUDED.last_seen_sha, " +
                      "parsed_assignee = EXCLUDED.parsed_assignee, priority = EXCLUDED.priority, " +
                      "due_date = EXCLUDED.due_date, issue_ref = EXCLUDED.issue_ref, " +
+                     "priority_auto = EXCLUDED.priority_auto, secret_detected = EXCLUDED.secret_detected, " +
                      // çözülmüş borç yeniden ortaya çıkarsa yaşı ve blame bilgisi sıfırlanır
                      "detected_at = CASE WHEN debts.resolved_at IS NOT NULL THEN NOW() ELSE debts.detected_at END, " +
                      "blame_at = CASE WHEN debts.resolved_at IS NOT NULL THEN NULL ELSE debts.blame_at END, " +
@@ -168,6 +171,8 @@ public class DebtRepository {
                         ps.setNull(12, Types.DATE);
                     }
                     ps.setString(13, debt.getIssueRef());
+                    ps.setBoolean(14, debt.isPriorityAuto());
+                    ps.setBoolean(15, debt.isSecretDetected());
                 }
 
                 @Override
@@ -397,6 +402,12 @@ public class DebtRepository {
         if (olderThan != null) {
             where.append(" AND COALESCE(d.introduced_at, d.detected_at) <= NOW() - (? * INTERVAL '1 day') ");
             params.add(olderThan);
+        }
+        if (Boolean.TRUE.equals(filter.getSecret())) {
+            where.append(" AND d.secret_detected ");
+        }
+        if (Boolean.TRUE.equals(filter.getDebtOnly())) {
+            where.append(" AND d.label NOT IN ('NOTE', 'DOC', 'INFO') ");
         }
         if (filter.getQ() != null && !filter.getQ().isBlank()) {
             String escaped = filter.getQ().trim()

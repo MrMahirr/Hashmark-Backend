@@ -1,8 +1,10 @@
 package dev.hashmark.report.repository;
 
+import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.report.dto.LabelStats;
 import dev.hashmark.report.dto.ModuleDebtInfo;
 import dev.hashmark.report.dto.TrendDataPoint;
+import dev.hashmark.report.service.DebtInsightsCalculator;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -190,6 +192,49 @@ public class ReportRepository {
         }, params.toArray());
         
         return stats;
+    }
+
+    /**
+     * İçgörü girdisi: açık borçlar (NOTE/DOC/INFO hariç) etiket, öncelik ve yaş aralığına göre gruplanır.
+     * Yaş = blame tarihi, yoksa ilk görülme; {@code olderThanDays} süzgeciyle aynı tanım, sayılar bağlantılarla tutarlı.
+     */
+    public DebtInsightsCalculator getInsights(Long userId, Long repoId) {
+        StringBuilder bucket = new StringBuilder("CASE");
+        int[] bounds = DebtInsightsCalculator.AGE_BOUNDS;
+        for (int i = 1; i < bounds.length; i++) {
+            bucket.append(" WHEN a.age < ").append(bounds[i]).append(" THEN ").append(i - 1);
+        }
+        bucket.append(" ELSE ").append(bounds.length - 1).append(" END");
+
+        StringBuilder sql = new StringBuilder(
+                "SELECT d.label, d.priority, " + bucket + " AS bucket, COUNT(*) AS cnt, " +
+                "COUNT(*) FILTER (WHERE d.priority_auto) AS auto_cnt, " +
+                "SUM(LEAST(a.age, 365)) AS capped_age, SUM(a.age) AS total_age " +
+                "FROM debts d JOIN repos r ON d.repo_id = r.id " +
+                "CROSS JOIN LATERAL (SELECT GREATEST(0, EXTRACT(EPOCH FROM (NOW() - COALESCE(d.introduced_at, d.detected_at)))" +
+                " / 86400.0) AS age) a " +
+                "WHERE r.user_id = ? AND " + DebtRepository.ACTIVE + " AND d.label NOT IN ('NOTE', 'DOC', 'INFO') ");
+        List<Object> params = new ArrayList<>();
+        params.add(userId);
+        if (repoId != null) {
+            sql.append(" AND d.repo_id = ? ");
+            params.add(repoId);
+        }
+        sql.append(" GROUP BY d.label, d.priority, bucket");
+
+        DebtInsightsCalculator calculator = new DebtInsightsCalculator();
+        jdbcTemplate.query(sql.toString(), rs -> {
+            calculator.add(rs.getString("label"), rs.getString("priority"), rs.getInt("bucket"), rs.getInt("cnt"),
+                    rs.getInt("auto_cnt"), rs.getDouble("capped_age"), rs.getDouble("total_age"));
+        }, params.toArray());
+
+        StringBuilder secretSql = new StringBuilder("SELECT COUNT(*) FROM debts d JOIN repos r ON d.repo_id = r.id " +
+                "WHERE r.user_id = ? AND " + DebtRepository.ACTIVE + " AND d.secret_detected");
+        if (repoId != null) {
+            secretSql.append(" AND d.repo_id = ?");
+        }
+        Integer secrets = jdbcTemplate.queryForObject(secretSql.toString(), Integer.class, params.toArray());
+        return calculator.secretCount(secrets != null ? secrets : 0);
     }
 
     public List<ModuleDebtInfo> getTopModules(Long userId, Long repoId) {

@@ -6,6 +6,8 @@ import dev.hashmark.settings.model.UserSettings;
 import dev.hashmark.settings.repository.UserSettingsRepository;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -25,6 +27,10 @@ public class UserSettingsService {
             "FRI", "FRIDAY", "SAT", "SATURDAY", "SUN", "SUNDAY");
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$");
     private static final int MAX_EMAIL_LENGTH = 255;
+    /** Maliyet için desteklenen para birimleri (arayüzdeki seçici ile aynı). */
+    public static final Set<String> CURRENCIES = Set.of("TRY", "USD", "EUR", "GBP");
+    static final BigDecimal MAX_HOURLY_RATE = new BigDecimal("100000");
+    static final String DEFAULT_CURRENCY = "USD";
 
     private final UserSettingsRepository userSettingsRepository;
 
@@ -64,6 +70,15 @@ public class UserSettingsService {
         if (dto.getDigestEmail() != null) {
             current.setDigestEmail(normalizeEmail(dto.getDigestEmail()));
         }
+        if (dto.getHourlyRate() != null) {
+            current.setHourlyRate(normalizeHourlyRate(dto.getHourlyRate()));
+        }
+        if (dto.getCurrency() != null) {
+            current.setCurrency(normalizeCurrency(dto.getCurrency()));
+        }
+        if (current.getHourlyRate() != null && current.getCurrency() == null) {
+            current.setCurrency(DEFAULT_CURRENCY);
+        }
         return userSettingsRepository.save(current);
     }
 
@@ -90,6 +105,25 @@ public class UserSettingsService {
             return null;
         }
         return String.join(",", out);
+    }
+
+    /** 0 = ücret kaldırılır ({@code null}); kuruş hassasiyetine yuvarlanır. */
+    static BigDecimal normalizeHourlyRate(BigDecimal raw) {
+        if (raw.signum() < 0 || raw.compareTo(MAX_HOURLY_RATE) > 0) {
+            throw ApiException.badRequest("hourlyRate must be between 0 and " + MAX_HOURLY_RATE.toPlainString());
+        }
+        if (raw.signum() == 0) {
+            return null;
+        }
+        return raw.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    static String normalizeCurrency(String raw) {
+        String value = raw.trim().toUpperCase(Locale.ROOT);
+        if (!CURRENCIES.contains(value)) {
+            throw ApiException.badRequest("currency must be one of " + String.join(", ", CURRENCIES));
+        }
+        return value;
     }
 
     /** Boş = GitHub e-postasını kullan ({@code null}). */

@@ -36,6 +36,10 @@ public class DebtDto {
     /** Etkin atanan: elle atama varsa o, yoksa kodda {@code TODO(kisi)} ile yazılan. */
     private String assignee;
     private String priority;
+    /** Öncelik koddan yazılmadı; yorumdaki anahtar kelimeden (security, crash...) çıkarıldı. */
+    private Boolean priorityAuto;
+    /** Yorumda sır (token, parola) bulundu ve maskelendi. */
+    private Boolean secretDetected;
     private LocalDate dueDate;
     private String issueRef;
 

@@ -40,6 +40,10 @@ public class DebtFilterRequest {
     private String author;
     /** Yalnızca en az bu kadar gündür var olan borçlar (yaş = blame tarihi, yoksa ilk görülme). */
     private Integer olderThanDays;
+    /** true: yalnızca yorumunda sır bulunup maskelenen borçlar. */
+    private Boolean secret;
+    /** true: NOTE/DOC/INFO hariç (içgörü sayılarıyla aynı kapsam). */
+    private Boolean debtOnly;
 
     public static final int MAX_AGE_DAYS = 36_500;
 

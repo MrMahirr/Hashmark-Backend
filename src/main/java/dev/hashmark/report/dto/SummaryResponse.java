@@ -15,4 +15,5 @@ public class SummaryResponse {
     private List<TrendDataPoint> trendData;
     private LabelStats labelStats;
     private List<ModuleDebtInfo> topModules;
+    private DebtInsights insights;
 }
