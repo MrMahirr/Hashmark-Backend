@@ -1,13 +1,21 @@
 package dev.hashmark.settings.service;
 
 import dev.hashmark.common.exception.ApiException;
+import dev.hashmark.settings.dto.UserSettingsDto;
+import dev.hashmark.settings.model.UserSettings;
+import dev.hashmark.settings.repository.UserSettingsRepository;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class UserSettingsServiceTest {
 
@@ -33,5 +41,52 @@ class UserSettingsServiceTest {
         assertNull(UserSettingsService.normalizeEmail("   "));
         assertThrows(ApiException.class, () -> UserSettingsService.normalizeEmail("not-an-email"));
         assertThrows(ApiException.class, () -> UserSettingsService.normalizeEmail("a@b"));
+    }
+
+    @Test
+    void hourlyRateIsRoundedAndZeroClearsIt() {
+        assertEquals(new BigDecimal("12.35"), UserSettingsService.normalizeHourlyRate(new BigDecimal("12.345")));
+        assertNull(UserSettingsService.normalizeHourlyRate(BigDecimal.ZERO));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeHourlyRate(new BigDecimal("-1")));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeHourlyRate(new BigDecimal("100001")));
+    }
+
+    @Test
+    void currencyMustBeSupported() {
+        assertEquals("TRY", UserSettingsService.normalizeCurrency(" try "));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeCurrency("BTC"));
+    }
+
+    @Test
+    void rateWithoutCurrencyDefaultsToUsd() {
+        UserSettingsRepository repository = mock(UserSettingsRepository.class);
+        when(repository.findByUserId(1L)).thenReturn(Optional.of(UserSettings.builder().userId(1L).build()));
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UserSettings saved = new UserSettingsService(repository)
+                .updateSettings(1L, UserSettingsDto.builder().hourlyRate(new BigDecimal("40")).build());
+
+        assertEquals(new BigDecimal("40.00"), saved.getHourlyRate());
+        assertEquals("USD", saved.getCurrency());
+    }
+
+    @Test
+    void scheduleFieldsAreValidated() {
+        assertEquals("DAILY", UserSettingsService.normalizeFrequency(" daily "));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeFrequency("HOURLY"));
+        assertEquals(0, UserSettingsService.normalizeHour(0));
+        assertEquals(23, UserSettingsService.normalizeHour(23));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeHour(24));
+        assertEquals("America/New_York", UserSettingsService.normalizeTimezone("America/New_York"));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeTimezone("+03:00"));
+        assertEquals("UTC", UserSettingsService.normalizeTimezone("UTC"));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeTimezone("Mars/Olympus"));
+    }
+
+    @Test
+    void alertThresholdZeroDisablesIt() {
+        assertNull(UserSettingsService.normalizeAlertMaxOpen(0));
+        assertEquals(50, UserSettingsService.normalizeAlertMaxOpen(50));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeAlertMaxOpen(-1));
     }
 }

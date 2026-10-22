@@ -29,6 +29,10 @@ public class Debt {
     // Parser üst verisi (her taramada yeniden yazılır)
     private String parsedAssignee;
     private String priority;
+    /** Öncelik koddan yazılmadı, anahtar kelimeden çıkarıldı. */
+    private boolean priorityAuto;
+    /** Yorumda sır bulundu ve maskelendi. */
+    private boolean secretDetected;
     private LocalDate dueDate;
     private String issueRef;
 }

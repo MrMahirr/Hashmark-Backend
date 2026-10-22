@@ -1,8 +1,10 @@
 package dev.hashmark.report.repository;
 
+import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.report.dto.LabelStats;
 import dev.hashmark.report.dto.ModuleDebtInfo;
 import dev.hashmark.report.dto.TrendDataPoint;
+import dev.hashmark.report.service.DebtInsightsCalculator;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -190,6 +192,99 @@ public class ReportRepository {
         }, params.toArray());
         
         return stats;
+    }
+
+    /**
+     * İçgörü girdisi: açık borçlar (NOTE/DOC/INFO hariç) etiket, öncelik ve yaş aralığına göre gruplanır.
+     * Yaş = blame tarihi, yoksa ilk görülme; {@code olderThanDays} süzgeciyle aynı tanım, sayılar bağlantılarla tutarlı.
+     */
+    public DebtInsightsCalculator getInsights(Long userId, Long repoId) {
+        return queryInsights(userId, repoId, false).getOrDefault(ALL_REPOS, new DebtInsightsCalculator());
+    }
+
+    /** Depo karşılaştırması: depo kimliği → içgörü girdisi (açık borcu olmayan depolar yer almaz). */
+    public Map<Long, DebtInsightsCalculator> getInsightsPerRepo(Long userId) {
+        return queryInsights(userId, null, true);
+    }
+
+    private static final long ALL_REPOS = 0L;
+
+    private Map<Long, DebtInsightsCalculator> queryInsights(Long userId, Long repoId, boolean perRepo) {
+        String repoColumn = perRepo ? "d.repo_id" : "0";
+        StringBuilder bucket = new StringBuilder("CASE");
+        int[] bounds = DebtInsightsCalculator.AGE_BOUNDS;
+        for (int i = 1; i < bounds.length; i++) {
+            bucket.append(" WHEN a.age < ").append(bounds[i]).append(" THEN ").append(i - 1);
+        }
+        bucket.append(" ELSE ").append(bounds.length - 1).append(" END");
+
+        StringBuilder sql = new StringBuilder(
+                "SELECT " + repoColumn + " AS repo_key, d.label, d.priority, " + bucket + " AS bucket, COUNT(*) AS cnt, " +
+                "COUNT(*) FILTER (WHERE d.priority_auto) AS auto_cnt, " +
+                "SUM(LEAST(a.age, 365)) AS capped_age, SUM(a.age) AS total_age " +
+                "FROM debts d JOIN repos r ON d.repo_id = r.id " +
+                "CROSS JOIN LATERAL (SELECT GREATEST(0, EXTRACT(EPOCH FROM (NOW() - COALESCE(d.introduced_at, d.detected_at)))" +
+                " / 86400.0) AS age) a " +
+                "WHERE r.user_id = ? AND " + DebtRepository.ACTIVE + " AND d.label NOT IN ('NOTE', 'DOC', 'INFO') ");
+        List<Object> params = new ArrayList<>();
+        params.add(userId);
+        if (repoId != null) {
+            sql.append(" AND d.repo_id = ? ");
+            params.add(repoId);
+        }
+        sql.append(" GROUP BY repo_key, d.label, d.priority, bucket");
+
+        Map<Long, DebtInsightsCalculator> result = new HashMap<>();
+        jdbcTemplate.query(sql.toString(), rs -> {
+            result.computeIfAbsent(rs.getLong("repo_key"), k -> new DebtInsightsCalculator())
+                    .add(rs.getString("label"), rs.getString("priority"), rs.getInt("bucket"), rs.getInt("cnt"),
+                            rs.getInt("auto_cnt"), rs.getDouble("capped_age"), rs.getDouble("total_age"));
+        }, params.toArray());
+
+        // Sırlar NOTE gibi bilgi yorumlarında da sayılır; borcu olmayan depoda yalnızca sır olabilir
+        StringBuilder secretSql = new StringBuilder("SELECT " + repoColumn + " AS repo_key, COUNT(*) AS cnt " +
+                "FROM debts d JOIN repos r ON d.repo_id = r.id " +
+                "WHERE r.user_id = ? AND " + DebtRepository.ACTIVE + " AND d.secret_detected");
+        if (repoId != null) {
+            secretSql.append(" AND d.repo_id = ?");
+        }
+        secretSql.append(" GROUP BY repo_key");
+        jdbcTemplate.query(secretSql.toString(), rs -> {
+            result.computeIfAbsent(rs.getLong("repo_key"), k -> new DebtInsightsCalculator())
+                    .secretCount(rs.getInt("cnt"));
+        }, params.toArray());
+        return result;
+    }
+
+    /** Hotspot satırı: dosya × etiket × öncelik başına açık borç ve bunların 90+ gün olanları. */
+    public record HotspotRow(String filePath, String label, String priority, int count, int stale) {
+    }
+
+    /** Hotspot girdisi için en fazla bu kadar satır okunur (çok büyük depolarda bellek sınırı). */
+    public static final int MAX_HOTSPOT_ROWS = 20_000;
+
+    /**
+     * Depodaki açık borçlar (NOTE/DOC/INFO hariç), {@code prefix} klasörü altında; dosya, etiket ve önceliğe göre.
+     *
+     * @param prefix boş = depo kökü; aksi halde sonunda "/" olan klasör yolu
+     */
+    public List<HotspotRow> getHotspotRows(Long userId, Long repoId, String prefix) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT d.file_path, d.label, d.priority, COUNT(*) AS cnt, " +
+                "COUNT(*) FILTER (WHERE COALESCE(d.introduced_at, d.detected_at) <= NOW() - (? * INTERVAL '1 day')) AS stale " +
+                "FROM debts d JOIN repos r ON d.repo_id = r.id " +
+                "WHERE r.user_id = ? AND d.repo_id = ? AND " + DebtRepository.ACTIVE +
+                " AND d.label NOT IN ('NOTE', 'DOC', 'INFO') ");
+        List<Object> params = new ArrayList<>(List.of(DebtInsightsCalculator.STALE_DAYS, userId, repoId));
+        if (!prefix.isEmpty()) {
+            sql.append(" AND d.file_path LIKE ? ESCAPE '\\' ");
+            params.add(DebtRepository.escapeLike(prefix) + "%");
+        }
+        sql.append(" GROUP BY d.file_path, d.label, d.priority ORDER BY cnt DESC LIMIT ?");
+        params.add(MAX_HOTSPOT_ROWS + 1);
+        return jdbcTemplate.query(sql.toString(), (rs, i) -> new HotspotRow(rs.getString("file_path"),
+                rs.getString("label"), rs.getString("priority"), rs.getInt("cnt"), rs.getInt("stale")),
+                params.toArray());
     }
 
     public List<ModuleDebtInfo> getTopModules(Long userId, Long repoId) {

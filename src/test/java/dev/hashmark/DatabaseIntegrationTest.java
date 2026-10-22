@@ -11,10 +11,13 @@ import dev.hashmark.debt.dto.ReplaceResult;
 import dev.hashmark.debt.model.Debt;
 import dev.hashmark.debt.repository.DebtRepository;
 import dev.hashmark.notification.repository.NotificationRepository;
+import dev.hashmark.report.dto.DebtInsights;
 import dev.hashmark.report.dto.TrendDataPoint;
 import dev.hashmark.report.repository.ReportRepository;
 import dev.hashmark.repo.repository.RepoRepository;
 import dev.hashmark.scanner.job.ScanResultWriter;
+import dev.hashmark.settings.model.UserSettings;
+import dev.hashmark.settings.repository.UserSettingsRepository;
 import dev.hashmark.scanner.model.ScanJob;
 import dev.hashmark.scanner.service.GitHubFileService.ScanResult;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -29,6 +32,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -348,6 +352,107 @@ class DatabaseIntegrationTest {
         d.setParsedAssignee("baska");
         scan("b".repeat(40), List.of(d));
         assertEquals("elle", debts.findByIdForUser(userId, dto.getId()).orElseThrow().getAssignee());
+    }
+
+    @Test
+    void insightsCountAgePriorityAndSecretsOfOpenDebtsOnly() {
+        migrateAll();
+        Debt old = debt("A.java", 1, "FIXME", "old crash");
+        old.setPriority("HIGH");
+        old.setPriorityAuto(true);
+        Debt leaked = debt("A.java", 2, "TODO", "key [REDACTED]");
+        leaked.setPriority("CRITICAL");
+        leaked.setPriorityAuto(true);
+        leaked.setSecretDetected(true);
+        Debt leakedNote = debt("A.java", 3, "NOTE", "token [REDACTED]");
+        leakedNote.setSecretDetected(true);
+        scan("a".repeat(40), List.of(old, leaked, leakedNote, debt("B.java", 1, "TODO", "ignored one")));
+        jdbc.update("UPDATE debts SET introduced_at = NOW() - INTERVAL '200 days' WHERE content = 'old crash'");
+        long ignored = jdbc.queryForObject("SELECT id FROM debts WHERE content = 'ignored one'", Long.class);
+        debts.updateTriage(userId, ignored, "IGNORED", null);
+
+        DebtInsights insights = reports.getInsights(userId, null).build(new BigDecimal("10"), "EUR");
+        assertEquals(2, insights.getOpenDebts());
+        assertEquals(1, insights.getStaleCount());
+        assertEquals(1, insights.getAgeBuckets().get(3).count());
+        assertEquals(2, insights.getAutoPriorityCount());
+        // NOTE borç sayılmaz ama içindeki sır sayılır
+        assertEquals(2, insights.getSecretCount());
+        assertEquals(1, insights.getPriorityCounts().get("CRITICAL"));
+        // FIXME 2×1.5 + TODO 1×2
+        assertEquals(5.0, insights.getWeightedDebt());
+        assertEquals(new BigDecimal("60"), insights.getEstimatedCost());
+
+        DebtFilterRequest secretOnly = new DebtFilterRequest();
+        secretOnly.setSecret(true);
+        secretOnly.setLabel("TODO");
+        DebtDto dto = debts.findByFilter(userId, secretOnly).getContent().get(0);
+        assertTrue(dto.getSecretDetected());
+        assertTrue(dto.getPriorityAuto());
+
+        DebtFilterRequest staleDebts = new DebtFilterRequest();
+        staleDebts.setDebtOnly(true);
+        staleDebts.setStatus("open");
+        staleDebts.setOlderThanDays(90);
+        assertEquals((long) insights.getStaleCount(), debts.findByFilter(userId, staleDebts).getTotalElements());
+
+        // Sır kaldırılınca bir sonraki tarama işareti siler
+        leaked.setSecretDetected(false);
+        scan("b".repeat(40), List.of(old, leaked));
+        assertEquals(0, reports.getInsights(userId, repoId).build(null, null).getSecretCount());
+    }
+
+    @Test
+    void hotspotRowsPerRepoInsightsAndPathFilter() {
+        migrateAll();
+        scan("a".repeat(40), List.of(
+                debt("src/api/Users.java", 1, "TODO", "a"),
+                debt("src/api/Users.java", 2, "FIXME", "b"),
+                debt("src/a_b/X.java", 1, "TODO", "c"),
+                debt("src/api/Note.java", 1, "NOTE", "just a note"),
+                debt("lib/Util.java", 1, "HACK", "d")));
+        jdbc.update("UPDATE debts SET introduced_at = NOW() - INTERVAL '100 days' WHERE content = 'a'");
+        long otherRepo = jdbc.queryForObject(
+                "INSERT INTO repos (user_id, github_repo_id, full_name, tracked) VALUES (?, ?, 'o/other', TRUE) RETURNING id",
+                Long.class, userId, "r-" + UUID.randomUUID());
+
+        // Kök: NOTE hariç 4 borç; "src/" altı 3
+        List<ReportRepository.HotspotRow> all = reports.getHotspotRows(userId, repoId, "");
+        assertEquals(4, all.stream().mapToInt(ReportRepository.HotspotRow::count).sum());
+        List<ReportRepository.HotspotRow> src = reports.getHotspotRows(userId, repoId, "src/");
+        assertEquals(3, src.stream().mapToInt(ReportRepository.HotspotRow::count).sum());
+        assertEquals(1, src.stream().mapToInt(ReportRepository.HotspotRow::stale).sum());
+        // "_" LIKE joker karakteri değil: src/a_b/ yalnızca o klasör
+        assertEquals(1, reports.getHotspotRows(userId, repoId, "src/a_b/").size());
+        assertEquals(0, reports.getHotspotRows(userId, repoId, "src/aXb/").size());
+        // Başka kullanıcının deposu boş döner
+        assertTrue(reports.getHotspotRows(userId + 999, repoId, "").isEmpty());
+
+        Map<Long, dev.hashmark.report.service.DebtInsightsCalculator> perRepo = reports.getInsightsPerRepo(userId);
+        assertEquals(4, perRepo.get(repoId).build(null, null).getOpenDebts());
+        assertFalse(perRepo.containsKey(otherRepo));
+
+        DebtFilterRequest byFolder = new DebtFilterRequest();
+        byFolder.setPath("/src/api/");
+        assertEquals(3, debts.findByFilter(userId, byFolder).getTotalElements());
+        DebtFilterRequest byFile = new DebtFilterRequest();
+        byFile.setPath("lib/Util.java");
+        assertEquals(1, debts.findByFilter(userId, byFile).getTotalElements());
+        DebtFilterRequest prefixOnly = new DebtFilterRequest();
+        prefixOnly.setPath("src/ap");
+        assertEquals(0, debts.findByFilter(userId, prefixOnly).getTotalElements());
+    }
+
+    @Test
+    void hourlyRateAndCurrencyArePersisted() {
+        migrateAll();
+        UserSettingsRepository settings = new UserSettingsRepository(jdbc);
+        settings.save(UserSettings.builder().userId(userId).emailNotify(true).notifyDay("MONDAY")
+                .hourlyRate(new BigDecimal("42.50")).currency("TRY").build());
+
+        UserSettings loaded = settings.findByUserId(userId).orElseThrow();
+        assertEquals(new BigDecimal("42.50"), loaded.getHourlyRate());
+        assertEquals("TRY", loaded.getCurrency());
     }
 
     @Test
@@ -766,14 +871,82 @@ class DatabaseIntegrationTest {
                 .digestLabels("TODO,FIXME").digestEmail("team@example.com").build());
         assertEquals("TODO,FIXME", saved.getDigestLabels());
         assertEquals("team@example.com", saved.getDigestEmail());
+        // Yeni kolonlar eski davranışın varsayılanlarını alır
+        assertEquals("WEEKLY", saved.getDigestFrequency());
+        assertEquals(8, saved.getDigestHour());
+        assertEquals("Europe/Istanbul", saved.getDigestTimezone());
+        assertNull(saved.getAlertMaxOpen());
+        assertTrue(saved.getAlertOnSecret());
 
         LocalDate friday = LocalDate.of(2026, 10, 16);
-        assertEquals(1, settings.findDigestRecipients("FRIDAY", friday).size());
-        assertEquals(0, settings.findDigestRecipients("MONDAY", friday).size());
-
+        assertEquals(1, settings.findDigestCandidates(friday).size());
         settings.markDigestSent(userId, friday);
-        assertEquals(0, settings.findDigestRecipients("FRIDAY", friday).size(), "aynı gün ikinci kez gönderilmez");
-        assertEquals(1, settings.findDigestRecipients("FRIDAY", friday.plusWeeks(1)).size());
+        assertEquals(0, settings.findDigestCandidates(friday).size(), "o gün gönderilmiş: aday değil");
+        assertEquals(1, settings.findDigestCandidates(friday.plusDays(1)).size());
+
+        // E-posta kapalı ama özet alan kanal varsa yine aday
+        saved.setEmailNotify(false);
+        saved.setDigestFrequency("DAILY");
+        saved.setAlertMaxOpen(25);
+        var updated = settings.save(saved);
+        assertEquals("DAILY", updated.getDigestFrequency());
+        assertEquals(25, updated.getAlertMaxOpen());
+        assertEquals(0, settings.findDigestCandidates(friday.plusDays(1)).size());
+        new dev.hashmark.channel.NotificationChannelRepository(jdbc).insert(userId,
+                dev.hashmark.channel.ChannelKind.SLACK, "enc", "hooks.slack.com/…abcd", true, false);
+        assertEquals(1, settings.findDigestCandidates(friday.plusDays(1)).size());
+    }
+
+    @Test
+    void notificationChannelsAreScopedToOwner() {
+        migrateAll();
+        var channels = new dev.hashmark.channel.NotificationChannelRepository(jdbc);
+        var saved = channels.insert(userId, dev.hashmark.channel.ChannelKind.DISCORD, "enc", "discord.com/…wxyz",
+                true, true);
+        assertEquals(1, channels.countByUserId(userId));
+        assertTrue(channels.findByIdForUser(saved.id(), userId + 1).isEmpty());
+        assertTrue(channels.updateFlags(saved.id(), userId + 1, false, null).isEmpty());
+        assertFalse(channels.delete(saved.id(), userId + 1));
+
+        var updated = channels.updateFlags(saved.id(), userId, false, null).orElseThrow();
+        assertFalse(updated.sendDigest());
+        assertTrue(updated.sendAlerts());
+        channels.recordResult(saved.id(), false, "HTTP 404");
+        var failed = channels.findByIdForUser(saved.id(), userId).orElseThrow();
+        assertEquals("FAILED", failed.lastStatus());
+        assertEquals("HTTP 404", failed.lastError());
+        assertTrue(channels.delete(saved.id(), userId));
+    }
+
+    @Test
+    void badgeTokenLookupAndScanAlertSnapshot() {
+        migrateAll();
+        jdbc.update("UPDATE repos SET tracked = TRUE WHERE id = ?", repoId);
+        RepoRepository repos = new RepoRepository(jdbc);
+        assertTrue(repos.findBadgeToken(repoId, userId).isEmpty());
+        assertEquals(1, repos.updateBadgeToken(repoId, userId, "t".repeat(43)));
+        assertEquals("t".repeat(43), repos.findBadgeToken(repoId, userId).orElseThrow());
+        assertEquals(repoId, repos.findByBadgeToken("t".repeat(43)).orElseThrow().getId());
+        assertEquals(0, repos.updateBadgeToken(repoId, userId + 1, null), "başkasının deposu");
+        assertTrue(repos.findByBadgeToken("x".repeat(43)).isEmpty());
+
+        // Herkese açık sayfa anahtarsız açılamaz; rozet kapanınca sayfa da kapanır
+        assertEquals(1, repos.updatePublicPage(repoId, userId, true));
+        assertTrue(repos.findBadgeState(repoId, userId).orElseThrow().publicPage());
+        assertTrue(repos.findByBadgeToken("t".repeat(43)).orElseThrow().getPublicPage());
+        repos.updateBadgeToken(repoId, userId, null);
+        assertFalse(repos.findBadgeState(repoId, userId).orElseThrow().publicPage());
+        assertEquals(0, repos.updatePublicPage(repoId, userId, true), "anahtar yok");
+        assertEquals(1, repos.updatePublicPage(repoId, userId, false), "kapatmak her zaman olur");
+        repos.updateBadgeToken(repoId, userId, "t".repeat(43));
+
+        Debt leaked = debt("A.java", 1, "TODO", "k [REDACTED]");
+        leaked.setSecretDetected(true);
+        scan("a".repeat(40), List.of(leaked, debt("A.java", 2, "FIXME", "f"), debt("A.java", 3, "NOTE", "n")));
+        var alerts = new dev.hashmark.channel.ScanAlertService(jdbc, null, null, null, null);
+        var snap = alerts.snapshot(repoId);
+        assertEquals(2, snap.openDebts());
+        assertEquals(1, snap.secrets());
     }
 
     @Test

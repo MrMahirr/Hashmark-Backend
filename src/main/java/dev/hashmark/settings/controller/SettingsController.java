@@ -9,6 +9,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/settings")
 @Tag(name = "Settings")
@@ -23,14 +25,7 @@ public class SettingsController {
     @GetMapping
     @Operation(summary = "Mevcut kullanici ayarlarini getir")
     public ResponseEntity<UserSettingsDto> getSettings(@AuthenticationPrincipal Long userId) {
-        UserSettings settings = userSettingsService.getSettings(userId);
-        
-        UserSettingsDto dto = UserSettingsDto.builder()
-                .emailNotify(settings.getEmailNotify())
-                .notifyDay(settings.getNotifyDay())
-                .build();
-                
-        return ResponseEntity.ok(dto);
+        return ResponseEntity.ok(toDto(userSettingsService.getSettings(userId)));
     }
 
     @PutMapping
@@ -39,13 +34,22 @@ public class SettingsController {
             @AuthenticationPrincipal Long userId,
             @RequestBody UserSettingsDto dto
     ) {
-        UserSettings settings = userSettingsService.updateSettings(userId, dto);
-        
-        UserSettingsDto responseDto = UserSettingsDto.builder()
+        return ResponseEntity.ok(toDto(userSettingsService.updateSettings(userId, dto)));
+    }
+
+    static UserSettingsDto toDto(UserSettings settings) {
+        return UserSettingsDto.builder()
                 .emailNotify(settings.getEmailNotify())
                 .notifyDay(settings.getNotifyDay())
+                .digestLabels(List.copyOf(settings.labelSet()))
+                .digestEmail(settings.getDigestEmail())
+                .hourlyRate(settings.getHourlyRate())
+                .currency(settings.getCurrency())
+                .digestFrequency(settings.getDigestFrequency())
+                .digestHour(settings.getDigestHour())
+                .digestTimezone(settings.getDigestTimezone())
+                .alertMaxOpen(settings.getAlertMaxOpen())
+                .alertOnSecret(settings.getAlertOnSecret())
                 .build();
-                
-        return ResponseEntity.ok(responseDto);
     }
 }

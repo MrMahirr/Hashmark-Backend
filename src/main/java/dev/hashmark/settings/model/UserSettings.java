@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -25,6 +26,20 @@ public class UserSettings {
     /** Özetin gönderileceği alternatif adres; {@code null} = GitHub e-postası. */
     private String digestEmail;
     private LocalDate lastDigestSentOn;
+    /** Teknik borç maliyeti için saatlik ücret; {@code null} = ayarlanmadı. */
+    private BigDecimal hourlyRate;
+    /** ISO 4217 para birimi (ör. TRY, USD). */
+    private String currency;
+    /** DAILY | WEEKLY | MONTHLY */
+    private String digestFrequency;
+    /** Gönderim saati (0–23), {@link #digestTimezone} içinde. */
+    private Integer digestHour;
+    /** IANA saat dilimi (ör. Europe/Istanbul). */
+    private String digestTimezone;
+    /** Açık borç bu sayıyı aşınca kanallara uyarı; {@code null} = kapalı. */
+    private Integer alertMaxOpen;
+    /** Taramada yeni sızan sır bulununca kanallara uyarı. */
+    private Boolean alertOnSecret;
     private LocalDateTime createdAt;
 
     /** Dahil edilecek etiketler; boş küme = hepsi. */
