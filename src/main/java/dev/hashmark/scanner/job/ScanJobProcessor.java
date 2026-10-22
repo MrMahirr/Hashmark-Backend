@@ -55,6 +55,7 @@ public class ScanJobProcessor {
     private final ConsentService consentService;
     private final ScanProperties scanProperties;
     private final ScanService scanService;
+    private dev.hashmark.channel.ScanAlertService scanAlertService;
 
     public ScanJobProcessor(ScanJobRepository scanJobRepository, ScanResultWriter scanResultWriter,
                             GitHubFileService gitHubFileService, BlameEnrichmentService blameEnrichmentService,
@@ -76,6 +77,12 @@ public class ScanJobProcessor {
         this.repoRepository = repoRepository;
         this.aesEncryptionUtil = aesEncryptionUtil;
         this.notificationService = notificationService;
+    }
+
+    /** Eşik / sızan sır uyarıları (kanallar + uygulama içi); yoksa uyarı gönderilmez. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setScanAlertService(dev.hashmark.channel.ScanAlertService scanAlertService) {
+        this.scanAlertService = scanAlertService;
     }
 
     /** PR kontrolü aynı kuyruğu, fencing'i ve ertelemeyi kullanır; işi yalnızca başka işçi yürütür. */
@@ -159,6 +166,8 @@ public class ScanJobProcessor {
                     (path, content) -> allDebts.addAll(toDebts(repoId, path, content, rules)),
                     processed -> scanJobRepository.updateProgress(jobId, token, processed));
 
+            dev.hashmark.channel.ScanAlertService.Snapshot before = scanAlertService != null
+                    ? scanAlertService.snapshot(repoId) : dev.hashmark.channel.ScanAlertService.Snapshot.EMPTY;
             // İş kapatma + borçlar + repo damgaları + snapshot tek transaction'da yazılır
             Optional<ReplaceResult> replaced = scanResultWriter.write(jobId, token, repoId, allDebts, result,
                     buildMessage(result, config));
@@ -168,6 +177,9 @@ public class ScanJobProcessor {
             }
 
             notifyScanDone(userId, repo.getFullName(), replaced.get());
+            if (scanAlertService != null && userId != null) {
+                scanAlertService.afterScan(userId, repoId, repo.getFullName(), before);
+            }
             enrichBlame(repoId, repo.getFullName(), plainToken, result.commitSha());
             return true;
 

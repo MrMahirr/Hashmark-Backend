@@ -293,13 +293,16 @@ class RowLevelSecurityTest {
 
     @Test
     void weeklyReportFindsRecipientsAndWritesUnderOwnScope() {
-        LocalDate today = LocalDate.now();
+        // Bugün 10:00 İstanbul: haftalık, 08:00, bugünün günü → vadesi gelmiş
+        java.time.ZoneId istanbul = java.time.ZoneId.of("Europe/Istanbul");
+        LocalDate today = LocalDate.now(istanbul);
+        java.time.Instant at = today.atTime(10, 0).atZone(istanbul).toInstant();
         owner.update("INSERT INTO " + SCHEMA + ".user_settings (user_id, email_notify, notify_day) VALUES (?, TRUE, ?)",
                 userA, today.getDayOfWeek().name());
         when(emailSender.isConfigured()).thenReturn(true);
         when(emailSender.send(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
 
-        org.springframework.test.util.ReflectionTestUtils.invokeMethod(weekly, "sendFor", today.getDayOfWeek(), today);
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(weekly, "sendDue", at);
 
         verify(emailSender).send(eq("u@x.y"), anyString(), anyString(), contains("<"));
         assertEquals(java.sql.Date.valueOf(today), owner.queryForObject(

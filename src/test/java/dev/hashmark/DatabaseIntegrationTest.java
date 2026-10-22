@@ -871,14 +871,82 @@ class DatabaseIntegrationTest {
                 .digestLabels("TODO,FIXME").digestEmail("team@example.com").build());
         assertEquals("TODO,FIXME", saved.getDigestLabels());
         assertEquals("team@example.com", saved.getDigestEmail());
+        // Yeni kolonlar eski davranışın varsayılanlarını alır
+        assertEquals("WEEKLY", saved.getDigestFrequency());
+        assertEquals(8, saved.getDigestHour());
+        assertEquals("Europe/Istanbul", saved.getDigestTimezone());
+        assertNull(saved.getAlertMaxOpen());
+        assertTrue(saved.getAlertOnSecret());
 
         LocalDate friday = LocalDate.of(2026, 10, 16);
-        assertEquals(1, settings.findDigestRecipients("FRIDAY", friday).size());
-        assertEquals(0, settings.findDigestRecipients("MONDAY", friday).size());
-
+        assertEquals(1, settings.findDigestCandidates(friday).size());
         settings.markDigestSent(userId, friday);
-        assertEquals(0, settings.findDigestRecipients("FRIDAY", friday).size(), "aynı gün ikinci kez gönderilmez");
-        assertEquals(1, settings.findDigestRecipients("FRIDAY", friday.plusWeeks(1)).size());
+        assertEquals(0, settings.findDigestCandidates(friday).size(), "o gün gönderilmiş: aday değil");
+        assertEquals(1, settings.findDigestCandidates(friday.plusDays(1)).size());
+
+        // E-posta kapalı ama özet alan kanal varsa yine aday
+        saved.setEmailNotify(false);
+        saved.setDigestFrequency("DAILY");
+        saved.setAlertMaxOpen(25);
+        var updated = settings.save(saved);
+        assertEquals("DAILY", updated.getDigestFrequency());
+        assertEquals(25, updated.getAlertMaxOpen());
+        assertEquals(0, settings.findDigestCandidates(friday.plusDays(1)).size());
+        new dev.hashmark.channel.NotificationChannelRepository(jdbc).insert(userId,
+                dev.hashmark.channel.ChannelKind.SLACK, "enc", "hooks.slack.com/…abcd", true, false);
+        assertEquals(1, settings.findDigestCandidates(friday.plusDays(1)).size());
+    }
+
+    @Test
+    void notificationChannelsAreScopedToOwner() {
+        migrateAll();
+        var channels = new dev.hashmark.channel.NotificationChannelRepository(jdbc);
+        var saved = channels.insert(userId, dev.hashmark.channel.ChannelKind.DISCORD, "enc", "discord.com/…wxyz",
+                true, true);
+        assertEquals(1, channels.countByUserId(userId));
+        assertTrue(channels.findByIdForUser(saved.id(), userId + 1).isEmpty());
+        assertTrue(channels.updateFlags(saved.id(), userId + 1, false, null).isEmpty());
+        assertFalse(channels.delete(saved.id(), userId + 1));
+
+        var updated = channels.updateFlags(saved.id(), userId, false, null).orElseThrow();
+        assertFalse(updated.sendDigest());
+        assertTrue(updated.sendAlerts());
+        channels.recordResult(saved.id(), false, "HTTP 404");
+        var failed = channels.findByIdForUser(saved.id(), userId).orElseThrow();
+        assertEquals("FAILED", failed.lastStatus());
+        assertEquals("HTTP 404", failed.lastError());
+        assertTrue(channels.delete(saved.id(), userId));
+    }
+
+    @Test
+    void badgeTokenLookupAndScanAlertSnapshot() {
+        migrateAll();
+        jdbc.update("UPDATE repos SET tracked = TRUE WHERE id = ?", repoId);
+        RepoRepository repos = new RepoRepository(jdbc);
+        assertTrue(repos.findBadgeToken(repoId, userId).isEmpty());
+        assertEquals(1, repos.updateBadgeToken(repoId, userId, "t".repeat(43)));
+        assertEquals("t".repeat(43), repos.findBadgeToken(repoId, userId).orElseThrow());
+        assertEquals(repoId, repos.findByBadgeToken("t".repeat(43)).orElseThrow().getId());
+        assertEquals(0, repos.updateBadgeToken(repoId, userId + 1, null), "başkasının deposu");
+        assertTrue(repos.findByBadgeToken("x".repeat(43)).isEmpty());
+
+        // Herkese açık sayfa anahtarsız açılamaz; rozet kapanınca sayfa da kapanır
+        assertEquals(1, repos.updatePublicPage(repoId, userId, true));
+        assertTrue(repos.findBadgeState(repoId, userId).orElseThrow().publicPage());
+        assertTrue(repos.findByBadgeToken("t".repeat(43)).orElseThrow().getPublicPage());
+        repos.updateBadgeToken(repoId, userId, null);
+        assertFalse(repos.findBadgeState(repoId, userId).orElseThrow().publicPage());
+        assertEquals(0, repos.updatePublicPage(repoId, userId, true), "anahtar yok");
+        assertEquals(1, repos.updatePublicPage(repoId, userId, false), "kapatmak her zaman olur");
+        repos.updateBadgeToken(repoId, userId, "t".repeat(43));
+
+        Debt leaked = debt("A.java", 1, "TODO", "k [REDACTED]");
+        leaked.setSecretDetected(true);
+        scan("a".repeat(40), List.of(leaked, debt("A.java", 2, "FIXME", "f"), debt("A.java", 3, "NOTE", "n")));
+        var alerts = new dev.hashmark.channel.ScanAlertService(jdbc, null, null, null, null);
+        var snap = alerts.snapshot(repoId);
+        assertEquals(2, snap.openDebts());
+        assertEquals(1, snap.secrets());
     }
 
     @Test

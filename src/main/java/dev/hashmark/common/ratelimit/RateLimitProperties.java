@@ -33,6 +33,10 @@ public class RateLimitProperties {
     private int webhookPerMinute = 60;
     /** {@code POST /debts/{id}/issue} ve {@code POST /debts/issues} (toplu: 20 issue), kullanıcı başına. */
     private int issuePerMinute = 10;
+    /** {@code POST /settings/channels/{id}/test}, kullanıcı başına (dış webhook'a istek). */
+    private int channelTestPerMinute = 10;
+    /** {@code /public/badge/**}, rozet adresi başına (camo/shields paylaşımlı IP'lerden gelir). */
+    private int badgePerMinute = 120;
 
     // ---- genel taban (her istek)
     /** Kimlikli her istek, kullanıcı başına. */

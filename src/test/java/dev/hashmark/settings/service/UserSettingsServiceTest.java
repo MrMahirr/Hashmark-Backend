@@ -69,4 +69,24 @@ class UserSettingsServiceTest {
         assertEquals(new BigDecimal("40.00"), saved.getHourlyRate());
         assertEquals("USD", saved.getCurrency());
     }
+
+    @Test
+    void scheduleFieldsAreValidated() {
+        assertEquals("DAILY", UserSettingsService.normalizeFrequency(" daily "));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeFrequency("HOURLY"));
+        assertEquals(0, UserSettingsService.normalizeHour(0));
+        assertEquals(23, UserSettingsService.normalizeHour(23));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeHour(24));
+        assertEquals("America/New_York", UserSettingsService.normalizeTimezone("America/New_York"));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeTimezone("+03:00"));
+        assertEquals("UTC", UserSettingsService.normalizeTimezone("UTC"));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeTimezone("Mars/Olympus"));
+    }
+
+    @Test
+    void alertThresholdZeroDisablesIt() {
+        assertNull(UserSettingsService.normalizeAlertMaxOpen(0));
+        assertEquals(50, UserSettingsService.normalizeAlertMaxOpen(50));
+        assertThrows(ApiException.class, () -> UserSettingsService.normalizeAlertMaxOpen(-1));
+    }
 }

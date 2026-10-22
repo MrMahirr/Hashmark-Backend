@@ -30,6 +30,8 @@ public class Repo {
     private Long webhookId;
     /** AES ile şifreli HMAC anahtarı; API yanıtına asla konmaz. */
     private String webhookSecret;
+    /** README rozeti anahtarı ile herkese açık "debt score" sayfası açık mı (V23). */
+    private Boolean publicPage;
 
     // Transient / calculated field
     private Integer debtCount;

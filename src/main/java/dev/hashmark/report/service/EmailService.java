@@ -81,7 +81,7 @@ public class EmailService {
             return false;
         }
         String html = renderReport(user, reportService.getSummary(user.getId(), null), settings);
-        return emailSender.send(to, user.getName(), text.get("subject"), html);
+        return emailSender.send(to, user.getName(), period(text.get("subject"), settings), html);
     }
 
     /** Oturumdaki kullanıcıya deneme e-postası gönderir. */
@@ -115,7 +115,7 @@ public class EmailService {
         values.put("lang", lang);
         values.put("title", text.get("heading"));
         values.put("preheader", text.get("preheader").replace("{total}", String.valueOf(total)));
-        values.put("eyebrow", text.get("eyebrow"));
+        values.put("eyebrow", period(text.get("eyebrow"), settings));
         values.put("heading", text.get("heading"));
         values.put("greeting", text.get("greeting").replace("{name}", displayName(user)));
         values.put("totalLabel", text.get("totalLabel"));
@@ -129,6 +129,16 @@ public class EmailService {
         values.put("footer", text.get("footer"));
         values.put("settingsLink", text.get("settingsLink"));
         return templates.render(TEMPLATE, values);
+    }
+
+    /** {@code {period}} / {@code {Period}}: ayardaki sıklığa göre günlük / haftalık / aylık. */
+    private String period(String template, UserSettings settings) {
+        String frequency = settings.getDigestFrequency() == null ? "WEEKLY"
+                : settings.getDigestFrequency().toUpperCase(java.util.Locale.ROOT);
+        String word = text.getOrDefault("period." + frequency, text.get("period.WEEKLY"));
+        String title = word.isEmpty() ? word : word.substring(0, 1).toUpperCase(java.util.Locale.forLanguageTag(lang))
+                + word.substring(1);
+        return template.replace("{period}", word).replace("{Period}", title);
     }
 
     private String displayName(User user) {
@@ -205,9 +215,12 @@ public class EmailService {
 
     private static final class MessagesTr {
         static final Map<String, String> VALUES = Map.ofEntries(
-                Map.entry("subject", "Hashmark · haftalık borç özetiniz"),
+                Map.entry("subject", "Hashmark · {period} borç özetiniz"),
+                Map.entry("period.DAILY", "günlük"),
+                Map.entry("period.WEEKLY", "haftalık"),
+                Map.entry("period.MONTHLY", "aylık"),
                 Map.entry("preheader", "{total} açık işaret. Bu haftanın özeti hazır."),
-                Map.entry("eyebrow", "Haftalık özet"),
+                Map.entry("eyebrow", "{Period} özet"),
                 Map.entry("heading", "Teknik borcun bu hafta nerede"),
                 Map.entry("greeting", "Merhaba {name}, depolarınızın bu haftaki durumu aşağıda."),
                 Map.entry("fallbackName", "merhaba"),
@@ -217,15 +230,18 @@ public class EmailService {
                 Map.entry("byLabel", "Etikete göre"),
                 Map.entry("topModule", "En çok borç biriken modül:"),
                 Map.entry("cta", "Paneli aç"),
-                Map.entry("footer", "Bu e-postayı Hashmark ayarlarınızda haftalık özet açık olduğu için alıyorsunuz."),
+                Map.entry("footer", "Bu e-postayı Hashmark ayarlarınızda e-posta özeti açık olduğu için alıyorsunuz."),
                 Map.entry("settingsLink", "Özet ayarlarını değiştir"));
     }
 
     private static final class MessagesEn {
         static final Map<String, String> VALUES = Map.ofEntries(
-                Map.entry("subject", "Hashmark · your weekly debt summary"),
+                Map.entry("subject", "Hashmark · your {period} debt summary"),
+                Map.entry("period.DAILY", "daily"),
+                Map.entry("period.WEEKLY", "weekly"),
+                Map.entry("period.MONTHLY", "monthly"),
                 Map.entry("preheader", "{total} open markers. This week's summary is ready."),
-                Map.entry("eyebrow", "Weekly summary"),
+                Map.entry("eyebrow", "{Period} summary"),
                 Map.entry("heading", "Where your technical debt stands"),
                 Map.entry("greeting", "Hi {name}, here is where your repositories stand this week."),
                 Map.entry("fallbackName", "there"),
@@ -235,7 +251,7 @@ public class EmailService {
                 Map.entry("byLabel", "By label"),
                 Map.entry("topModule", "Module with the most debt:"),
                 Map.entry("cta", "Open dashboard"),
-                Map.entry("footer", "You receive this because the weekly summary is enabled in your Hashmark settings."),
+                Map.entry("footer", "You receive this because the email summary is enabled in your Hashmark settings."),
                 Map.entry("settingsLink", "Change summary settings"));
     }
 }

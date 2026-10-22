@@ -28,6 +28,11 @@ public class UserSettingsRepository {
             .digestEmail(rs.getString("digest_email"))
             .hourlyRate(rs.getBigDecimal("hourly_rate"))
             .currency(rs.getString("currency"))
+            .digestFrequency(rs.getString("digest_frequency"))
+            .digestHour(rs.getInt("digest_hour"))
+            .digestTimezone(rs.getString("digest_timezone"))
+            .alertMaxOpen(rs.getObject("alert_max_open") != null ? rs.getInt("alert_max_open") : null)
+            .alertOnSecret(rs.getBoolean("alert_on_secret"))
             .lastDigestSentOn(rs.getDate("last_digest_sent_on") != null ? rs.getDate("last_digest_sent_on").toLocalDate() : null)
             .createdAt(rs.getTimestamp("created_at").toLocalDateTime())
             .build();
@@ -39,11 +44,16 @@ public class UserSettingsRepository {
 
     public UserSettings save(UserSettings settings) {
         String sql = "INSERT INTO user_settings (user_id, email_notify, notify_day, digest_labels, digest_email, " +
-                     "hourly_rate, currency) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+                     "hourly_rate, currency, digest_frequency, digest_hour, digest_timezone, alert_max_open, " +
+                     "alert_on_secret) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'WEEKLY'), COALESCE(?, 8), " +
+                     "COALESCE(?, 'Europe/Istanbul'), ?, COALESCE(?, TRUE)) " +
                      "ON CONFLICT (user_id) DO UPDATE " +
                      "SET email_notify = EXCLUDED.email_notify, notify_day = EXCLUDED.notify_day, " +
                      "digest_labels = EXCLUDED.digest_labels, digest_email = EXCLUDED.digest_email, " +
-                     "hourly_rate = EXCLUDED.hourly_rate, currency = EXCLUDED.currency " +
+                     "hourly_rate = EXCLUDED.hourly_rate, currency = EXCLUDED.currency, " +
+                     "digest_frequency = EXCLUDED.digest_frequency, digest_hour = EXCLUDED.digest_hour, " +
+                     "digest_timezone = EXCLUDED.digest_timezone, alert_max_open = EXCLUDED.alert_max_open, " +
+                     "alert_on_secret = EXCLUDED.alert_on_secret " +
                      "RETURNING *";
         return jdbcTemplate.queryForObject(
                 sql,
@@ -54,7 +64,12 @@ public class UserSettingsRepository {
                 settings.getDigestLabels(),
                 settings.getDigestEmail(),
                 settings.getHourlyRate(),
-                settings.getCurrency()
+                settings.getCurrency(),
+                settings.getDigestFrequency(),
+                settings.getDigestHour(),
+                settings.getDigestTimezone(),
+                settings.getAlertMaxOpen(),
+                settings.getAlertOnSecret()
         );
     }
 
@@ -63,15 +78,17 @@ public class UserSettingsRepository {
     }
 
     /**
-     * Bugün özet isteyen kullanıcılar: özet açık, gönderim günü eşleşiyor ve bugün henüz gönderilmemiş.
+     * Özet adayları: e-posta özeti açık ya da özet alan bir bildirim kanalı var, ve {@code latestLocalDate}
+     * gününde henüz gönderilmemiş. Gün/saat/sıklık kullanıcının saat diliminde {@code DigestSchedule} ile süzülür.
      *
-     * @param dayName {@code MONDAY} ... {@code SUNDAY}
+     * @param latestLocalDate dünyadaki en ileri yerel tarih (UTC + 1 gün); bundan önce gönderilenler aday
      */
-    public List<DigestRecipient> findDigestRecipients(String dayName, LocalDate today) {
+    public List<DigestRecipient> findDigestCandidates(LocalDate latestLocalDate) {
         String sql = "SELECT u.id AS u_id, u.github_id, u.email, u.name, u.github_login, u.avatar_url, u.github_token, " +
                      "u.created_at AS u_created, us.* " +
                      "FROM users u JOIN user_settings us ON u.id = us.user_id " +
-                     "WHERE us.email_notify = true AND upper(us.notify_day) = ? " +
+                     "WHERE (us.email_notify OR EXISTS (SELECT 1 FROM notification_channels c " +
+                     "WHERE c.user_id = u.id AND c.send_digest)) " +
                      "AND (us.last_digest_sent_on IS NULL OR us.last_digest_sent_on < ?)";
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
             User user = User.builder()
@@ -85,7 +102,7 @@ public class UserSettingsRepository {
                     .createdAt(rs.getTimestamp("u_created").toLocalDateTime())
                     .build();
             return new DigestRecipient(user, rowMapper.mapRow(rs, rowNum));
-        }, dayName.toUpperCase(), java.sql.Date.valueOf(today));
+        }, java.sql.Date.valueOf(latestLocalDate));
     }
 
     public void markDigestSent(Long userId, LocalDate day) {
