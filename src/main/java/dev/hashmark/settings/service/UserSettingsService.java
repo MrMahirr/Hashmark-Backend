@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -31,6 +32,8 @@ public class UserSettingsService {
     public static final Set<String> CURRENCIES = Set.of("TRY", "USD", "EUR", "GBP");
     static final BigDecimal MAX_HOURLY_RATE = new BigDecimal("100000");
     static final String DEFAULT_CURRENCY = "USD";
+    static final Set<String> FREQUENCIES = Set.of("DAILY", "WEEKLY", "MONTHLY");
+    static final int MAX_ALERT_THRESHOLD = 1_000_000;
 
     private final UserSettingsRepository userSettingsRepository;
 
@@ -76,6 +79,21 @@ public class UserSettingsService {
         if (dto.getCurrency() != null) {
             current.setCurrency(normalizeCurrency(dto.getCurrency()));
         }
+        if (dto.getDigestFrequency() != null) {
+            current.setDigestFrequency(normalizeFrequency(dto.getDigestFrequency()));
+        }
+        if (dto.getDigestHour() != null) {
+            current.setDigestHour(normalizeHour(dto.getDigestHour()));
+        }
+        if (dto.getDigestTimezone() != null) {
+            current.setDigestTimezone(normalizeTimezone(dto.getDigestTimezone()));
+        }
+        if (dto.getAlertMaxOpen() != null) {
+            current.setAlertMaxOpen(normalizeAlertMaxOpen(dto.getAlertMaxOpen()));
+        }
+        if (dto.getAlertOnSecret() != null) {
+            current.setAlertOnSecret(dto.getAlertOnSecret());
+        }
         if (current.getHourlyRate() != null && current.getCurrency() == null) {
             current.setCurrency(DEFAULT_CURRENCY);
         }
@@ -105,6 +123,38 @@ public class UserSettingsService {
             return null;
         }
         return String.join(",", out);
+    }
+
+    static String normalizeFrequency(String raw) {
+        String value = raw.trim().toUpperCase(Locale.ROOT);
+        if (!FREQUENCIES.contains(value)) {
+            throw ApiException.badRequest("digestFrequency must be one of DAILY, WEEKLY, MONTHLY");
+        }
+        return value;
+    }
+
+    static int normalizeHour(int hour) {
+        if (hour < 0 || hour > 23) {
+            throw ApiException.badRequest("digestHour must be between 0 and 23");
+        }
+        return hour;
+    }
+
+    /** Yalnızca bölge adı (Europe/Istanbul); "+03:00" gibi sabit kaymalar yaz saatini izlemez, kabul edilmez. */
+    static String normalizeTimezone(String raw) {
+        String value = raw.trim();
+        if (value.length() > 64 || !(value.contains("/") || "UTC".equals(value)) || !ZoneId.getAvailableZoneIds().contains(value)) {
+            throw ApiException.badRequest("digestTimezone must be an IANA time zone such as Europe/Istanbul");
+        }
+        return value;
+    }
+
+    /** 0 = uyarı kapalı ({@code null}). */
+    static Integer normalizeAlertMaxOpen(int value) {
+        if (value < 0 || value > MAX_ALERT_THRESHOLD) {
+            throw ApiException.badRequest("alertMaxOpen must be between 0 and " + MAX_ALERT_THRESHOLD);
+        }
+        return value == 0 ? null : value;
     }
 
     /** 0 = ücret kaldırılır ({@code null}); kuruş hassasiyetine yuvarlanır. */

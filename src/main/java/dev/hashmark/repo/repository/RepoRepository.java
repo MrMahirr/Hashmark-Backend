@@ -174,6 +174,25 @@ public class RepoRepository {
                 webhookId, eventsVersion, id, userId);
     }
 
+    /** README rozeti anahtarı; {@code null} = rozet kapalı. */
+    public Optional<String> findBadgeToken(Long id, Long userId) {
+        return jdbcTemplate.query("SELECT badge_token FROM repos WHERE id = ? AND user_id = ? AND tracked",
+                (rs, i) -> Optional.ofNullable(rs.getString("badge_token")), id, userId)
+                .stream().findFirst().orElse(Optional.empty());
+    }
+
+    /** @param token {@code null} = rozeti kapat */
+    public int updateBadgeToken(Long id, Long userId, String token) {
+        return jdbcTemplate.update("UPDATE repos SET badge_token = ? WHERE id = ? AND user_id = ? AND tracked",
+                token, id, userId);
+    }
+
+    /** Herkese açık rozet isteği (kimliksiz: çağıran sistem kapsamında çalışmalı); yalnızca izlenen depo. */
+    public Optional<Repo> findByBadgeToken(String token) {
+        return jdbcTemplate.query("SELECT * FROM repos WHERE badge_token = ? AND tracked", repoRowMapper, token)
+                .stream().findFirst();
+    }
+
     /** Olay kümesi eski sürümde kalmış hook'lar (sistem kapsamında çağrılır). */
     public List<Repo> findOutdatedWebhooks(int currentVersion, int limit) {
         return jdbcTemplate.query("SELECT * FROM repos WHERE webhook_id IS NOT NULL AND webhook_version < ? " +

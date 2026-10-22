@@ -30,6 +30,16 @@ public class UserSettings {
     private BigDecimal hourlyRate;
     /** ISO 4217 para birimi (ör. TRY, USD). */
     private String currency;
+    /** DAILY | WEEKLY | MONTHLY */
+    private String digestFrequency;
+    /** Gönderim saati (0–23), {@link #digestTimezone} içinde. */
+    private Integer digestHour;
+    /** IANA saat dilimi (ör. Europe/Istanbul). */
+    private String digestTimezone;
+    /** Açık borç bu sayıyı aşınca kanallara uyarı; {@code null} = kapalı. */
+    private Integer alertMaxOpen;
+    /** Taramada yeni sızan sır bulununca kanallara uyarı. */
+    private Boolean alertOnSecret;
     private LocalDateTime createdAt;
 
     /** Dahil edilecek etiketler; boş küme = hepsi. */

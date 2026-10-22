@@ -29,6 +29,8 @@ import java.util.regex.Pattern;
  *   <tr><td>sync</td><td>{@code POST /repos/sync}</td><td>kullanıcı</td></tr>
  *   <tr><td>context</td><td>{@code GET /debts/{id}/context}</td><td>kullanıcı</td></tr>
  *   <tr><td>issue</td><td>{@code POST /debts/{id}/issue}, {@code POST /debts/issues}</td><td>kullanıcı</td></tr>
+ *   <tr><td>channel</td><td>{@code POST /settings/channels/{id}/test}</td><td>kullanıcı</td></tr>
+ *   <tr><td>badge</td><td>{@code /public/badge/**}</td><td>yol (rozet); IP tabanı uygulanmaz</td></tr>
  *   <tr><td>public</td><td>{@code /public/**}</td><td>IP</td></tr>
  *   <tr><td>webhook</td><td>{@code /webhooks/**}</td><td>yol (depo); IP tabanı uygulanmaz</td></tr>
  *   <tr><td>user</td><td>kimlikli her istek</td><td>kullanıcı</td></tr>
@@ -44,6 +46,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final long WINDOW_MS = 60_000L;
     private static final Pattern CONTEXT_PATH = Pattern.compile("^/debts/[^/]+/context$");
     private static final Pattern ISSUE_PATH = Pattern.compile("^/debts/([^/]+/issue|issues)$");
+    private static final Pattern CHANNEL_TEST_PATH = Pattern.compile("^/settings/channels/[^/]+/test$");
 
     private final RateLimitProperties props;
     private final SlidingWindowLimiter limiter;
@@ -113,6 +116,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         if ("POST".equalsIgnoreCase(method) && ISSUE_PATH.matcher(path).matches()
                 && rejected("issue", subject, props.getIssuePerMinute(), response)) {
+            return;
+        }
+        if ("POST".equalsIgnoreCase(method) && CHANNEL_TEST_PATH.matcher(path).matches()
+                && rejected("channel", subject, props.getChannelTestPerMinute(), response)) {
+            return;
+        }
+        if (path.startsWith("/public/badge/")) {
+            // README rozetlerini GitHub'ın görsel vekili (camo) ve shields.io paylaşımlı IP'lerden çeker:
+            // IP tabanı yerine rozet adresi başına sınır
+            if (!rejected("badge", path, props.getBadgePerMinute(), response)) {
+                chain.doFilter(request, response);
+            }
             return;
         }
         if (path.startsWith("/public/") && rejected("public", ip, props.getPublicPerMinute(), response)) {

@@ -45,6 +45,11 @@ public class SettingsController {
                 .digestEmail(settings.getDigestEmail())
                 .hourlyRate(settings.getHourlyRate())
                 .currency(settings.getCurrency())
+                .digestFrequency(settings.getDigestFrequency())
+                .digestHour(settings.getDigestHour())
+                .digestTimezone(settings.getDigestTimezone())
+                .alertMaxOpen(settings.getAlertMaxOpen())
+                .alertOnSecret(settings.getAlertOnSecret())
                 .build();
     }
 }

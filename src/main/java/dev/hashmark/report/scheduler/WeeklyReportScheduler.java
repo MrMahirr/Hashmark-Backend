@@ -3,7 +3,7 @@ package dev.hashmark.report.scheduler;
 import dev.hashmark.consent.ConsentService;
 import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.auth.model.User;
-import dev.hashmark.report.service.EmailService;
+import dev.hashmark.report.service.DigestService;
 import dev.hashmark.settings.model.UserSettings;
 import dev.hashmark.settings.repository.UserSettingsRepository;
 import org.slf4j.Logger;
@@ -13,66 +13,69 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 
 /**
- * Her gün 08:00'de (varsayılan Europe/Istanbul) o gün özet isteyen kullanıcılara haftalık raporu gönderir.
- * Aynı gün ikinci kez gönderilmez (son gönderim günü kaydedilir).
+ * Her saat başı, vadesi gelen özetleri gönderir (e-posta ve sohbet kanalları). Sıklık, gün, saat ve saat dilimi
+ * kullanıcı ayarındadır ({@link DigestSchedule}); varsayılan haftalık, 08:00, {@code report.timezone}.
+ * Aynı yerel günde ikinci kez gönderilmez (son gönderim günü kaydedilir).
  */
 @Component
 public class WeeklyReportScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(WeeklyReportScheduler.class);
 
-    private final EmailService emailService;
+    private final DigestService digestService;
     private final UserSettingsRepository userSettingsRepository;
     private final ZoneId zone;
     private final ConsentService consentService;
 
-    public WeeklyReportScheduler(EmailService emailService, UserSettingsRepository userSettingsRepository,
+    public WeeklyReportScheduler(DigestService digestService, UserSettingsRepository userSettingsRepository,
                                  ConsentService consentService,
                                  @Value("${report.timezone:Europe/Istanbul}") String timezone) {
-        this.emailService = emailService;
+        this.digestService = digestService;
         this.userSettingsRepository = userSettingsRepository;
         this.consentService = consentService;
         this.zone = ZoneId.of(timezone);
     }
 
-    @Scheduled(cron = "0 0 8 * * *", zone = "${report.timezone:Europe/Istanbul}")
+    @Scheduled(cron = "0 0 * * * *")
     // 2+ instance'ta tek gönderim: kilit en az 5 dk tutulur (saat kayması olan ikinci instance da atlar)
-    @SchedulerLock(name = "weekly-report", lockAtMostFor = "PT1H", lockAtLeastFor = "PT5M")
-    public void sendWeeklyReports() {
-        LocalDate today = LocalDate.now(zone);
-        sendFor(today.getDayOfWeek(), today);
+    @SchedulerLock(name = "weekly-report", lockAtMostFor = "PT50M", lockAtLeastFor = "PT5M")
+    public void sendDueDigests() {
+        sendDue(Instant.now());
     }
 
-    /** Test edilebilirlik için gün dışarıdan verilebilir. */
-    void sendFor(DayOfWeek day, LocalDate today) {
-        if (!emailService.isConfigured()) {
-            log.info("Weekly reports skipped: email provider is not configured");
-            return;
-        }
+    /** Test edilebilirlik için an dışarıdan verilebilir. */
+    void sendDue(Instant now) {
+        // Dünyadaki en ileri yerel gün UTC + 1; o günden önce gönderilmiş herkes aday, kesin süzme Java'da
+        LocalDate latestLocalDate = now.atZone(ZoneOffset.UTC).toLocalDate().plusDays(1);
         // Alıcı listesi kullanıcılar arası (sistem); her rapor yalnızca o kullanıcının kapsamında üretilir (RLS, V11)
-        List<UserSettingsRepository.DigestRecipient> recipients =
-                TenantContext.asSystem(() -> userSettingsRepository.findDigestRecipients(day.name(), today));
-        for (UserSettingsRepository.DigestRecipient recipient : recipients) {
+        List<UserSettingsRepository.DigestRecipient> candidates =
+                TenantContext.asSystem(() -> userSettingsRepository.findDigestCandidates(latestLocalDate));
+        for (UserSettingsRepository.DigestRecipient recipient : candidates) {
             User user = recipient.user();
             UserSettings settings = recipient.settings();
+            LocalDate due = DigestSchedule.dueDate(settings, now, zone);
+            if (due == null) {
+                continue;
+            }
             // Onay kapısı açıkken onaysız kullanıcıya özet üretilmez (plan 5.10)
             if (consentService.isProcessingBlocked(user.getId())) {
                 continue;
             }
             try {
                 TenantContext.asUser(user.getId(), () -> {
-                    if (emailService.sendWeeklyReport(user, settings)) {
-                        userSettingsRepository.markDigestSent(user.getId(), today);
+                    if (digestService.send(user, settings)) {
+                        userSettingsRepository.markDigestSent(user.getId(), due);
                     }
                 });
             } catch (Exception e) {
-                log.error("Failed to send weekly report. userId={}", user.getId(), e);
+                log.error("Failed to send digest. userId={}", user.getId(), e);
             }
         }
     }
