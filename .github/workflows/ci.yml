@@ -27,8 +27,8 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 5s
           --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "25", cache: maven }
       - name: mvn verify
         env:
@@ -41,14 +41,14 @@ jobs:
     name: İzleme yapılandırması + alarm kuralı testleri
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash scripts/check-monitoring.sh
 
   docker-build:
     name: Docker imajları derlenir
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t hashmark-backend:ci .
       # PITR: postgres + pgBackRest (docs/PITR.md). Uçtan uca test (scripts/pitr-e2e-test.sh) MinIO imajı
       # gerektirdiği için yerelde koşulur.
