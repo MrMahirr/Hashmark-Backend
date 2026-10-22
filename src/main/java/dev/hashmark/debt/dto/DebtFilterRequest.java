@@ -44,6 +44,19 @@ public class DebtFilterRequest {
     private Boolean secret;
     /** true: NOTE/DOC/INFO hariç (içgörü sayılarıyla aynı kapsam). */
     private Boolean debtOnly;
+    /** Dosya ya da klasör yolu (hotspot haritasından); klasörse altındaki tüm dosyalar. */
+    private String path;
+
+    public static final int MAX_PATH_LENGTH = 500;
+
+    /** Baştaki/sondaki "/" atılır; boş veya aşırı uzun yol yok sayılır. */
+    public String safePath() {
+        if (path == null) {
+            return null;
+        }
+        String trimmed = path.trim().replaceAll("^/+|/+$", "");
+        return trimmed.isEmpty() || trimmed.length() > MAX_PATH_LENGTH ? null : trimmed;
+    }
 
     public static final int MAX_AGE_DAYS = 36_500;
 

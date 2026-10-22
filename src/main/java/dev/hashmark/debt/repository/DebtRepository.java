@@ -374,6 +374,11 @@ public class DebtRepository {
     // Sorgular
     // ------------------------------------------------------------------
 
+    /** LIKE kalıbında kullanıcı girdisi: {@code \ % _} harfiyen eşleşsin ({@code ESCAPE '\'} ile). */
+    public static String escapeLike(String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
     private String buildWhere(Long userId, DebtFilterRequest filter, List<Object> params) {
         StringBuilder where = new StringBuilder(" WHERE r.user_id = ? ");
         params.add(userId);
@@ -409,9 +414,15 @@ public class DebtRepository {
         if (Boolean.TRUE.equals(filter.getDebtOnly())) {
             where.append(" AND d.label NOT IN ('NOTE', 'DOC', 'INFO') ");
         }
+        String path = filter.safePath();
+        if (path != null) {
+            // Dosyanın kendisi ya da klasörün altı
+            where.append(" AND (d.file_path = ? OR d.file_path LIKE ? ESCAPE '\\') ");
+            params.add(path);
+            params.add(escapeLike(path) + "/%");
+        }
         if (filter.getQ() != null && !filter.getQ().isBlank()) {
-            String escaped = filter.getQ().trim()
-                    .replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+            String escaped = escapeLike(filter.getQ().trim());
             where.append(" AND (d.content ILIKE ? ESCAPE '\\' OR d.file_path ILIKE ? ESCAPE '\\') ");
             params.add("%" + escaped + "%");
             params.add("%" + escaped + "%");

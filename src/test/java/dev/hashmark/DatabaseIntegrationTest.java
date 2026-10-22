@@ -403,6 +403,47 @@ class DatabaseIntegrationTest {
     }
 
     @Test
+    void hotspotRowsPerRepoInsightsAndPathFilter() {
+        migrateAll();
+        scan("a".repeat(40), List.of(
+                debt("src/api/Users.java", 1, "TODO", "a"),
+                debt("src/api/Users.java", 2, "FIXME", "b"),
+                debt("src/a_b/X.java", 1, "TODO", "c"),
+                debt("src/api/Note.java", 1, "NOTE", "just a note"),
+                debt("lib/Util.java", 1, "HACK", "d")));
+        jdbc.update("UPDATE debts SET introduced_at = NOW() - INTERVAL '100 days' WHERE content = 'a'");
+        long otherRepo = jdbc.queryForObject(
+                "INSERT INTO repos (user_id, github_repo_id, full_name, tracked) VALUES (?, ?, 'o/other', TRUE) RETURNING id",
+                Long.class, userId, "r-" + UUID.randomUUID());
+
+        // Kök: NOTE hariç 4 borç; "src/" altı 3
+        List<ReportRepository.HotspotRow> all = reports.getHotspotRows(userId, repoId, "");
+        assertEquals(4, all.stream().mapToInt(ReportRepository.HotspotRow::count).sum());
+        List<ReportRepository.HotspotRow> src = reports.getHotspotRows(userId, repoId, "src/");
+        assertEquals(3, src.stream().mapToInt(ReportRepository.HotspotRow::count).sum());
+        assertEquals(1, src.stream().mapToInt(ReportRepository.HotspotRow::stale).sum());
+        // "_" LIKE joker karakteri değil: src/a_b/ yalnızca o klasör
+        assertEquals(1, reports.getHotspotRows(userId, repoId, "src/a_b/").size());
+        assertEquals(0, reports.getHotspotRows(userId, repoId, "src/aXb/").size());
+        // Başka kullanıcının deposu boş döner
+        assertTrue(reports.getHotspotRows(userId + 999, repoId, "").isEmpty());
+
+        Map<Long, dev.hashmark.report.service.DebtInsightsCalculator> perRepo = reports.getInsightsPerRepo(userId);
+        assertEquals(4, perRepo.get(repoId).build(null, null).getOpenDebts());
+        assertFalse(perRepo.containsKey(otherRepo));
+
+        DebtFilterRequest byFolder = new DebtFilterRequest();
+        byFolder.setPath("/src/api/");
+        assertEquals(3, debts.findByFilter(userId, byFolder).getTotalElements());
+        DebtFilterRequest byFile = new DebtFilterRequest();
+        byFile.setPath("lib/Util.java");
+        assertEquals(1, debts.findByFilter(userId, byFile).getTotalElements());
+        DebtFilterRequest prefixOnly = new DebtFilterRequest();
+        prefixOnly.setPath("src/ap");
+        assertEquals(0, debts.findByFilter(userId, prefixOnly).getTotalElements());
+    }
+
+    @Test
     void hourlyRateAndCurrencyArePersisted() {
         migrateAll();
         UserSettingsRepository settings = new UserSettingsRepository(jdbc);

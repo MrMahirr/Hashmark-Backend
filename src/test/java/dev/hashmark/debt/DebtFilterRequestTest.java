@@ -45,4 +45,17 @@ class DebtFilterRequestTest {
         f.setDir("sideways");
         assertEquals("DESC", f.sortDirection());
     }
+
+    @Test
+    void pathIsTrimmedOfSlashesAndBlankOrHugeIsIgnored() {
+        DebtFilterRequest f = new DebtFilterRequest();
+        assertEquals(null, f.safePath());
+
+        f.setPath(" /src/api/ ");
+        assertEquals("src/api", f.safePath());
+        f.setPath("///");
+        assertEquals(null, f.safePath());
+        f.setPath("a".repeat(DebtFilterRequest.MAX_PATH_LENGTH + 1));
+        assertEquals(null, f.safePath());
+    }
 }
