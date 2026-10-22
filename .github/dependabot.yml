@@ -9,6 +9,10 @@ updates:
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
     groups:
+      # jjwt-api / -impl / -jackson aynı sürümde olmalı: ayrı PR'larda api tek başına yükselince
+      # JWT sınıfları yüklenemiyor (PR #12). İlk eşleşen grup kazanır, bu yüzden genel gruptan önce.
+      jjwt:
+        patterns: ["io.jsonwebtoken:*"]
       maven-minor-patch:
         update-types: [minor, patch]
 
