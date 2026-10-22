@@ -930,6 +930,16 @@ class DatabaseIntegrationTest {
         assertEquals(0, repos.updateBadgeToken(repoId, userId + 1, null), "başkasının deposu");
         assertTrue(repos.findByBadgeToken("x".repeat(43)).isEmpty());
 
+        // Herkese açık sayfa anahtarsız açılamaz; rozet kapanınca sayfa da kapanır
+        assertEquals(1, repos.updatePublicPage(repoId, userId, true));
+        assertTrue(repos.findBadgeState(repoId, userId).orElseThrow().publicPage());
+        assertTrue(repos.findByBadgeToken("t".repeat(43)).orElseThrow().getPublicPage());
+        repos.updateBadgeToken(repoId, userId, null);
+        assertFalse(repos.findBadgeState(repoId, userId).orElseThrow().publicPage());
+        assertEquals(0, repos.updatePublicPage(repoId, userId, true), "anahtar yok");
+        assertEquals(1, repos.updatePublicPage(repoId, userId, false), "kapatmak her zaman olur");
+        repos.updateBadgeToken(repoId, userId, "t".repeat(43));
+
         Debt leaked = debt("A.java", 1, "TODO", "k [REDACTED]");
         leaked.setSecretDetected(true);
         scan("a".repeat(40), List.of(leaked, debt("A.java", 2, "FIXME", "f"), debt("A.java", 3, "NOTE", "n")));

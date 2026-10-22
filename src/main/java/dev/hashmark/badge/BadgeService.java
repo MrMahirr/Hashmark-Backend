@@ -5,13 +5,18 @@ import dev.hashmark.common.tenant.TenantContext;
 import dev.hashmark.consent.ConsentService;
 import dev.hashmark.repo.model.Repo;
 import dev.hashmark.repo.repository.RepoRepository;
+import dev.hashmark.repo.repository.RepoRepository.BadgeState;
 import dev.hashmark.report.dto.DebtInsights;
+import dev.hashmark.report.dto.LabelStats;
 import dev.hashmark.report.repository.ReportRepository;
 import dev.hashmark.report.service.HealthScore;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -60,9 +65,19 @@ public class BadgeService {
         this.consentService = consentService;
     }
 
-    public Optional<String> getToken(Long userId, Long repoId) {
+    public BadgeState getState(Long userId, Long repoId) {
         requireTracked(userId, repoId);
-        return repoRepository.findBadgeToken(repoId, userId);
+        return repoRepository.findBadgeState(repoId, userId).orElse(new BadgeState(null, false));
+    }
+
+    /** Sayfayı açmak için anahtar gerekir: rozet kapalıysa önce anahtar üretilir (rozet de açılmış olur). */
+    public BadgeState setPublicPage(Long userId, Long repoId, boolean enabled) {
+        BadgeState state = getState(userId, repoId);
+        if (enabled && state.token() == null) {
+            repoRepository.updateBadgeToken(repoId, userId, newToken());
+        }
+        repoRepository.updatePublicPage(repoId, userId, enabled);
+        return getState(userId, repoId);
     }
 
     /** Rozeti açar ya da anahtarı yeniler (eski README bağlantıları çalışmaz). */
@@ -78,8 +93,11 @@ public class BadgeService {
         repoRepository.updateBadgeToken(repoId, userId, null);
     }
 
-    /** Kimliksiz istek: depo sistem kapsamında anahtarla bulunur, içgörü sahibin kapsamında hesaplanır. */
-    public Optional<BadgeData> publicBadge(String token) {
+    /**
+     * Kimliksiz istek: depo sistem kapsamında anahtarla bulunur. Onay geri çekildiyse (kapı açıkken) kullanıcının
+     * verisi işlenmez: bilinmiyor gibi davranılır.
+     */
+    private Optional<Repo> publicRepo(String token) {
         if (token == null || !TOKEN.matcher(token).matches()) {
             return Optional.empty();
         }
@@ -88,10 +106,19 @@ public class BadgeService {
             return Optional.empty();
         }
         Repo r = repo.get();
-        // Onay geri çekildiyse (kapı açıkken) kullanıcının verisi işlenmez: rozet bilinmiyor gibi davranır
         if (TenantContext.asUser(r.getUserId(), () -> consentService.isProcessingBlocked(r.getUserId()))) {
             return Optional.empty();
         }
+        return repo;
+    }
+
+    /** İçgörü sahibin kapsamında hesaplanır. */
+    public Optional<BadgeData> publicBadge(String token) {
+        Optional<Repo> repo = publicRepo(token);
+        if (repo.isEmpty()) {
+            return Optional.empty();
+        }
+        Repo r = repo.get();
         if (r.getLastScannedAt() == null) {
             return Optional.of(new BadgeData(false, null, 0));
         }
@@ -99,6 +126,37 @@ public class BadgeService {
                 () -> reportRepository.getInsights(r.getUserId(), r.getId()).build(null, null));
         HealthScore health = HealthScore.of(insights.getWeightedDebt());
         return Optional.of(new BadgeData(true, health.grade(), health.score()));
+    }
+
+    /** Yalnızca sahip sayfayı açtıysa; taranmamış depoda boş sayılarla döner. */
+    public Optional<PublicScore> publicScore(String token) {
+        Optional<Repo> repo = publicRepo(token).filter(r -> Boolean.TRUE.equals(r.getPublicPage()));
+        if (repo.isEmpty()) {
+            return Optional.empty();
+        }
+        Repo r = repo.get();
+        return Optional.of(TenantContext.asUser(r.getUserId(), () -> {
+            DebtInsights insights = reportRepository.getInsights(r.getUserId(), r.getId()).build(null, null);
+            HealthScore health = HealthScore.of(insights.getWeightedDebt());
+            List<PublicScore.Week> trend = reportRepository.getTrendData(r.getUserId(), r.getId()).stream()
+                    .map(p -> new PublicScore.Week(p.getWeekStart(), p.getTotalDebts())).toList();
+            boolean scanned = r.getLastScannedAt() != null;
+            return new PublicScore(r.getFullName(), Boolean.TRUE.equals(r.getIsPrivate()), r.getLastScannedAt(),
+                    scanned ? health.grade() : null, scanned ? health.score() : 0, insights.getOpenDebts(),
+                    insights.getStaleCount(), insights.getRotScore(), insights.getAverageAgeDays(),
+                    debtLabels(reportRepository.getLabelStats(r.getUserId(), r.getId())), insights.getAgeBuckets(),
+                    trend);
+        }));
+    }
+
+    private static Map<String, Integer> debtLabels(LabelStats stats) {
+        Map<String, Integer> labels = new LinkedHashMap<>();
+        labels.put("TODO", stats.getTodoCount());
+        labels.put("FIXME", stats.getFixmeCount());
+        labels.put("HACK", stats.getHackCount());
+        labels.put("XXX", stats.getXxxCount());
+        labels.putAll(stats.getCustomCounts());
+        return labels;
     }
 
     private void requireTracked(Long userId, Long repoId) {

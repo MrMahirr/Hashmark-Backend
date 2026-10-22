@@ -72,6 +72,48 @@ class BadgeTest {
     }
 
     @Test
+    void publicScoreOnlyWhenOwnerOptedInAndWithoutSensitiveFields() {
+        Repo repo = Repo.builder().id(5L).userId(9L).fullName("o/app").isPrivate(true)
+                .lastScannedAt(LocalDateTime.now()).publicPage(false).build();
+        when(repos.findByBadgeToken(token)).thenReturn(Optional.of(repo));
+        assertTrue(service.publicScore(token).isEmpty(), "rozet açık ama sayfa açılmamış");
+
+        repo.setPublicPage(true);
+        when(reports.getInsights(9L, 5L)).thenReturn(new DebtInsightsCalculator()
+                .add("HACK", "CRITICAL", 4, 2, 0, 730, 1000).secretCount(3));
+        when(reports.getLabelStats(9L, 5L)).thenReturn(new dev.hashmark.report.dto.LabelStats(0, 0, 2, 0, 9, 0, 0));
+        when(reports.getTrendData(9L, 5L)).thenReturn(java.util.List.of(
+                new dev.hashmark.report.dto.TrendDataPoint(java.time.LocalDate.of(2026, 10, 12), 2, 1, 0)));
+
+        PublicScore score = service.publicScore(token).orElseThrow();
+        assertEquals("o/app", score.repoName());
+        assertTrue(score.privateRepo());
+        // HACK 2 × 2 × kritik 2 = 8 → A, 88
+        assertEquals("A", score.grade());
+        assertEquals(88, score.score());
+        assertEquals(2, score.staleCount());
+        assertEquals(2, score.labels().get("HACK"));
+        assertFalse(score.labels().containsKey("NOTE"), "bilgi etiketleri borç değil");
+        assertEquals(1, score.trend().size());
+        // Sır sayısı, öncelik, maliyet kayıtta hiç yok
+        assertFalse(score.toString().contains("secret"));
+    }
+
+    @Test
+    void enablingThePublicPageCreatesATokenWhenMissing() {
+        when(repos.findByIdAndUserId(5L, 9L)).thenReturn(Optional.of(Repo.builder().id(5L).tracked(true).build()));
+        when(repos.findBadgeState(5L, 9L)).thenReturn(Optional.of(new RepoRepository.BadgeState(null, false)),
+                Optional.of(new RepoRepository.BadgeState("x".repeat(43), true)));
+
+        var state = service.setPublicPage(9L, 5L, true);
+
+        verify(repos).updateBadgeToken(org.mockito.ArgumentMatchers.eq(5L), org.mockito.ArgumentMatchers.eq(9L),
+                org.mockito.ArgumentMatchers.argThat(t -> t != null && BadgeService.TOKEN.matcher(t).matches()));
+        verify(repos).updatePublicPage(5L, 9L, true);
+        assertTrue(state.publicPage());
+    }
+
+    @Test
     void rotateProducesUrlSafeTokens() {
         when(repos.findByIdAndUserId(5L, 9L)).thenReturn(Optional.of(Repo.builder().id(5L).tracked(true).build()));
         String a = service.rotate(9L, 5L);

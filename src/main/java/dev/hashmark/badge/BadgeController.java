@@ -1,6 +1,7 @@
 package dev.hashmark.badge;
 
 import dev.hashmark.badge.BadgeService.BadgeData;
+import dev.hashmark.repo.repository.RepoRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.CacheControl;
@@ -24,7 +25,14 @@ public class BadgeController {
     private static final MediaType SVG = MediaType.parseMediaType("image/svg+xml;charset=utf-8");
     private static final String LABEL = "hashmark";
 
-    public record BadgeInfo(boolean enabled, String token) {
+    /** @param publicPage aynı anahtarla /p/&lt;anahtar&gt; herkese açık sayfası açık mı */
+    public record BadgeInfo(boolean enabled, String token, boolean publicPage) {
+        static BadgeInfo of(RepoRepository.BadgeState state) {
+            return new BadgeInfo(state.token() != null, state.token(), state.publicPage());
+        }
+    }
+
+    public record PublicPageRequest(boolean enabled) {
     }
 
     private final BadgeService badgeService;
@@ -36,13 +44,29 @@ public class BadgeController {
     @GetMapping("/repos/{repoId}/badge")
     @Operation(summary = "README rozeti durumu")
     public BadgeInfo get(@AuthenticationPrincipal Long userId, @PathVariable Long repoId) {
-        return badgeService.getToken(userId, repoId).map(t -> new BadgeInfo(true, t)).orElse(new BadgeInfo(false, null));
+        return BadgeInfo.of(badgeService.getState(userId, repoId));
     }
 
     @PostMapping("/repos/{repoId}/badge")
     @Operation(summary = "Rozeti ac ya da anahtari yenile (eski baglanti calismaz)")
     public BadgeInfo rotate(@AuthenticationPrincipal Long userId, @PathVariable Long repoId) {
-        return new BadgeInfo(true, badgeService.rotate(userId, repoId));
+        badgeService.rotate(userId, repoId);
+        return BadgeInfo.of(badgeService.getState(userId, repoId));
+    }
+
+    @PutMapping("/repos/{repoId}/badge/public-page")
+    @Operation(summary = "Herkese acik debt score sayfasini ac/kapat (rozet anahtariyla)")
+    public BadgeInfo setPublicPage(@AuthenticationPrincipal Long userId, @PathVariable Long repoId,
+                                   @RequestBody PublicPageRequest request) {
+        return BadgeInfo.of(badgeService.setPublicPage(userId, repoId, request.enabled()));
+    }
+
+    @GetMapping("/public/score/{token}")
+    @Operation(summary = "Herkese acik debt score sayfasi verisi")
+    public ResponseEntity<PublicScore> score(@PathVariable String token) {
+        return badgeService.publicScore(token)
+                .map(s -> ResponseEntity.ok().cacheControl(CACHE).body(s))
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @DeleteMapping("/repos/{repoId}/badge")

@@ -32,6 +32,7 @@ public class RepoRepository {
             .sizeKb(rs.getObject("size_kb") != null ? rs.getInt("size_kb") : null)
             .webhookId(rs.getObject("webhook_id") != null ? rs.getLong("webhook_id") : null)
             .webhookSecret(rs.getString("webhook_secret"))
+            .publicPage(rs.getBoolean("public_page"))
             .build();
 
     /** Kullanıcı kotası: izlenen depo sayısı. */
@@ -174,17 +175,32 @@ public class RepoRepository {
                 webhookId, eventsVersion, id, userId);
     }
 
-    /** README rozeti anahtarı; {@code null} = rozet kapalı. */
-    public Optional<String> findBadgeToken(Long id, Long userId) {
-        return jdbcTemplate.query("SELECT badge_token FROM repos WHERE id = ? AND user_id = ? AND tracked",
-                (rs, i) -> Optional.ofNullable(rs.getString("badge_token")), id, userId)
-                .stream().findFirst().orElse(Optional.empty());
+    /** Rozet anahtarı ({@code null} = rozet kapalı) ve herkese açık sayfa durumu. */
+    public record BadgeState(String token, boolean publicPage) {
     }
 
-    /** @param token {@code null} = rozeti kapat */
+    public Optional<BadgeState> findBadgeState(Long id, Long userId) {
+        return jdbcTemplate.query("SELECT badge_token, public_page FROM repos WHERE id = ? AND user_id = ? AND tracked",
+                (rs, i) -> new BadgeState(rs.getString("badge_token"), rs.getBoolean("public_page")), id, userId)
+                .stream().findFirst();
+    }
+
+    /** README rozeti anahtarı; {@code null} = rozet kapalı. */
+    public Optional<String> findBadgeToken(Long id, Long userId) {
+        return findBadgeState(id, userId).map(BadgeState::token);
+    }
+
+    /** @param token {@code null} = rozeti kapat (anahtarı kullanan herkese açık sayfa da kapanır) */
     public int updateBadgeToken(Long id, Long userId, String token) {
-        return jdbcTemplate.update("UPDATE repos SET badge_token = ? WHERE id = ? AND user_id = ? AND tracked",
-                token, id, userId);
+        return jdbcTemplate.update("UPDATE repos SET badge_token = ?, " +
+                "public_page = CASE WHEN CAST(? AS TEXT) IS NULL THEN FALSE ELSE public_page END " +
+                "WHERE id = ? AND user_id = ? AND tracked", token, token, id, userId);
+    }
+
+    /** Sayfa ancak rozet anahtarı varken açılabilir. */
+    public int updatePublicPage(Long id, Long userId, boolean enabled) {
+        return jdbcTemplate.update("UPDATE repos SET public_page = ? WHERE id = ? AND user_id = ? AND tracked " +
+                "AND (badge_token IS NOT NULL OR NOT ?)", enabled, id, userId, enabled);
     }
 
     /** Herkese açık rozet isteği (kimliksiz: çağıran sistem kapsamında çalışmalı); yalnızca izlenen depo. */
