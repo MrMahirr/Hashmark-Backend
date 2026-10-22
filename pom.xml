@@ -31,8 +31,8 @@
         <argLine></argLine>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <resilience4j.version>2.3.0</resilience4j.version>
-        <shedlock.version>7.0.0</shedlock.version>
+        <resilience4j.version>2.4.0</resilience4j.version>
+        <shedlock.version>7.10.1</shedlock.version>
     </properties>
     <dependencies>
         <dependency>
