@@ -1,0 +1,63 @@
+name: deploy
+
+# master'a gelen her push (PR birleştirmesi) için "ci" yeşil biterse üretime dağıtır. Elle de tetiklenebilir
+# (Actions → deploy → Run workflow; yalnızca master'daki commit kabul edilir).
+#
+# Gerekli secret'lar (Settings → Secrets and variables → Actions, ya da "production" ortamında):
+#   PROD_SSH_KEY      : yalnızca /opt/hashmark/bin/hashmark-deploy çalıştırabilen kısıtlı anahtarın özel kısmı
+#   PROD_KNOWN_HOSTS  : sunucunun SSH host anahtarı satırı (ortadaki adam saldırısına karşı sabitlenir)
+#   PROD_HOST         : deploy@<sunucu>
+# Sunucu tarafı: scripts/auto-deploy.sh
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Aynı depoda dağıtımlar sıraya girer, yarıda kesilmez (sunucu da kilitle iki depoyu sıralar)
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Üretime dağıt (backend)
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' ||
+      github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: SSH anahtarı
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Dağıt
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o ServerAliveInterval=30 "$HOST" "deploy backend $SHA"
+
+      - name: Duman testi
+        run: |
+          curl -fsS --retry 6 --retry-delay 10 --retry-all-errors -o /dev/null \
+            https://hashmark.yunusemremahir.com.tr/api/v1/public/stats
+          echo "API yanıt veriyor"
+
+      - name: Anahtarı sil
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
