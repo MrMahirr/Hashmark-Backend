@@ -1,26 +1,67 @@
 name: security
 
+# Trivy ile güvenlik taraması: üretimde çalışan Docker imajları taranır (işletim sistemi paketleri + jar içindeki
+# Java kütüphaneleri). Düzeltmesi yayımlanmış YÜKSEK/KRİTİK açık varsa iş kırmızı biter.
+#
+# Neden OWASP Dependency-Check değil: veritabanını NVD API'sinden indiriyordu; NVD GitHub koşucularına o kadar
+# yavaş yanıt verdi ki 60 dakikada 413 bin kaydın %3'ü indi (2026-10-22). Trivy kendi veritabanını
+# (GitHub Advisory + NVD + dağıtım bültenleri) tek dosya olarak saniyeler içinde indirir; API anahtarı gerekmez.
+
 on:
   push:
     branches: [main, master]
   pull_request:
   schedule:
-    - cron: "0 5 * * 1"   # her pazartesi: yeni CVE'ler için
+    - cron: "0 5 * * 1"   # her pazartesi: kod değişmese de yeni yayımlanan açıklar için
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  dependency-check:
-    name: OWASP Dependency-Check
+  trivy:
+    name: Trivy (Docker imajları)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Resmi imaj, sürüm + özet (digest) ile sabit: etiket sonradan değiştirilse bile aynı ikili çalışır
+      TRIVY: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+      # --ignore-unfixed: henüz düzeltmesi olmayan açıklar build'i düşürmez (yapılabilecek bir şey yok)
+      TRIVY_ARGS: >-
+        --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+        --exit-code 1 --no-progress --skip-version-check
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with: { distribution: temurin, java-version: "25", cache: maven }
-      - name: CVSS >= 7 build'i düşürür
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Gün
+        id: day
+        run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      # Trivy veritabanı (~100 MB) günde bir indirilir; aynı gün içindeki koşular önbellekten kullanır
+      - name: Trivy veritabanı önbelleği
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ steps.day.outputs.value }}
+          restore-keys: trivy-db-
+
+      # --pull: taban imajın (ubuntu/alpine) güncel yamalı hâli taranır, koşucudaki eski kopya değil
+      - name: İmajları derle
+        run: |
+          docker build --pull -t hashmark-backend:scan .
+          docker build --pull -t hashmark-postgres:scan postgres
+
+      - name: Tara — backend imajı (OS paketleri + Spring Boot jar'ı)
         run: >
-          ./mvnw -B org.owasp:dependency-check-maven:check
-          -DfailBuildOnCVSS=7 -DnvdApiKey="$NVD_API_KEY"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy"
+          "$TRIVY" image $TRIVY_ARGS hashmark-backend:scan
+
+      # gosu hariç: resmi postgres imajının, konteyner açılırken root'tan postgres kullanıcısına geçmek için bir kez
+      # çalıştırdığı küçük ikili. Eski Go sürümüyle derlendiği için Go standart kütüphanesinin TLS/x509/net/url
+      # açıkları raporlanıyor; gosu ağ bağlantısı kurmaz, sertifika işlemez, bu kod yolları çalışmaz
+      # (bkz. https://github.com/tianon/gosu README, güvenlik tarayıcıları bölümü). İkili resmi imajdan gelir; burada
+      # düzeltilemez. İmajın geri kalanı (Alpine paketleri, pgBackRest) taranır.
+      - name: Tara — PostgreSQL imajı
+        if: always()
+        run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy"
+          "$TRIVY" image $TRIVY_ARGS --skip-files usr/local/bin/gosu hashmark-postgres:scan
