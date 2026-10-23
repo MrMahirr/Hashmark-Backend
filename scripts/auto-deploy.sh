@@ -122,8 +122,10 @@ echo "commit'ler:"
 git log --oneline "$PREV..$TARGET"
 git merge --ff-only -q "$TARGET"
 
+# --pull: taban imaj (eclipse-temurin, node) her dağıtımda güncellenir; yoksa sunucudaki eski kopyayla derlenir ve
+# işletim sistemi güvenlik yamaları hiç gelmez (2026-10-23: node:22-alpine 3 aylık, postgres:18-alpine 5 haftalıktı)
 deploy_current() {
-  docker compose build "$COMPONENT" && docker compose up -d "$COMPONENT" && wait_healthy
+  docker compose build --pull "$COMPONENT" && docker compose up -d "$COMPONENT" && wait_healthy
 }
 
 if deploy_current; then

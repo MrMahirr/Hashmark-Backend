@@ -44,18 +44,24 @@ jobs:
           key: trivy-db-${{ steps.day.outputs.value }}
           restore-keys: trivy-db-
 
+      # --pull: taban imajın (ubuntu/alpine) güncel yamalı hâli taranır, koşucudaki eski kopya değil
       - name: İmajları derle
         run: |
-          docker build -t hashmark-backend:scan .
-          docker build -t hashmark-postgres:scan postgres
+          docker build --pull -t hashmark-backend:scan .
+          docker build --pull -t hashmark-postgres:scan postgres
 
       - name: Tara — backend imajı (OS paketleri + Spring Boot jar'ı)
         run: >
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy"
           "$TRIVY" image $TRIVY_ARGS hashmark-backend:scan
 
+      # gosu hariç: resmi postgres imajının, konteyner açılırken root'tan postgres kullanıcısına geçmek için bir kez
+      # çalıştırdığı küçük ikili. Eski Go sürümüyle derlendiği için Go standart kütüphanesinin TLS/x509/net/url
+      # açıkları raporlanıyor; gosu ağ bağlantısı kurmaz, sertifika işlemez, bu kod yolları çalışmaz
+      # (bkz. https://github.com/tianon/gosu README, güvenlik tarayıcıları bölümü). İkili resmi imajdan gelir; burada
+      # düzeltilemez. İmajın geri kalanı (Alpine paketleri, pgBackRest) taranır.
       - name: Tara — PostgreSQL imajı
         if: always()
         run: >
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy"
-          "$TRIVY" image $TRIVY_ARGS hashmark-postgres:scan
+          "$TRIVY" image $TRIVY_ARGS --skip-files usr/local/bin/gosu hashmark-postgres:scan
