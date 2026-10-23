@@ -1,54 +1,61 @@
 name: security
 
+# Trivy ile güvenlik taraması: üretimde çalışan Docker imajları taranır (işletim sistemi paketleri + jar içindeki
+# Java kütüphaneleri). Düzeltmesi yayımlanmış YÜKSEK/KRİTİK açık varsa iş kırmızı biter.
+#
+# Neden OWASP Dependency-Check değil: veritabanını NVD API'sinden indiriyordu; NVD GitHub koşucularına o kadar
+# yavaş yanıt verdi ki 60 dakikada 413 bin kaydın %3'ü indi (2026-10-22). Trivy kendi veritabanını
+# (GitHub Advisory + NVD + dağıtım bültenleri) tek dosya olarak saniyeler içinde indirir; API anahtarı gerekmez.
+
 on:
   push:
     branches: [main, master]
   pull_request:
   schedule:
-    - cron: "0 5 * * 1"   # her pazartesi: yeni CVE'ler için
+    - cron: "0 5 * * 1"   # her pazartesi: kod değişmese de yeni yayımlanan açıklar için
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  dependency-check:
-    name: OWASP Dependency-Check
+  trivy:
+    name: Trivy (Docker imajları)
     runs-on: ubuntu-latest
-    # NVD API'si yanıt vermezse araç saatlerce bekleyip yeniden deneyebiliyor (2026-10-22: 50+ dk takıldı)
-    timeout-minutes: 60
+    timeout-minutes: 20
     env:
-      # dependency-check-maven'in varsayılan veri dizini (NVD'den indirilen CVE veritabanı)
-      NVD_DATA_DIR: ~/.m2/repository/org/owasp/dependency-check-data
+      # Resmi imaj, sürüm + özet (digest) ile sabit: etiket sonradan değiştirilse bile aynı ikili çalışır
+      TRIVY: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+      # --ignore-unfixed: henüz düzeltmesi olmayan açıklar build'i düşürmez (yapılabilecek bir şey yok)
+      TRIVY_ARGS: >-
+        --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+        --exit-code 1 --no-progress --skip-version-check
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with: { distribution: temurin, java-version: "25", cache: maven }
 
-      # NVD veritabanı (~300 bin CVE) her koşuda baştan indirilmesin: önceki günün verisi geri yüklenir,
-      # araç yalnızca değişiklikleri çeker. Anahtar güne göre; aynı gün içindeki koşular aynı önbelleği paylaşır.
       - name: Gün
         id: day
         run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
-      - name: NVD verisini geri yükle
-        uses: actions/cache/restore@v4
+      # Trivy veritabanı (~100 MB) günde bir indirilir; aynı gün içindeki koşular önbellekten kullanır
+      - name: Trivy veritabanı önbelleği
+        uses: actions/cache@v4
         with:
-          path: ${{ env.NVD_DATA_DIR }}
-          key: nvd-data-${{ steps.day.outputs.value }}
-          restore-keys: nvd-data-
+          path: ~/.cache/trivy
+          key: trivy-db-${{ steps.day.outputs.value }}
+          restore-keys: trivy-db-
 
-      - name: CVSS >= 7 build'i düşürür
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - name: İmajları derle
+        run: |
+          docker build -t hashmark-backend:scan .
+          docker build -t hashmark-postgres:scan postgres
+
+      - name: Tara — backend imajı (OS paketleri + Spring Boot jar'ı)
         run: >
-          ./mvnw -B org.owasp:dependency-check-maven:check
-          -DfailBuildOnCVSS=7 -DnvdApiKey="$NVD_API_KEY"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy"
+          "$TRIVY" image $TRIVY_ARGS hashmark-backend:scan
 
-      # Tarama açık bulup kırmızı bitse de (ya da zaman aşımına uğrasa da) indirilen veri saklanır;
-      # yoksa her kırmızı koşu veritabanını yeniden indirirdi.
-      - name: NVD verisini sakla
-        if: always() && steps.day.outputs.value != ''
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.NVD_DATA_DIR }}
-          key: nvd-data-${{ steps.day.outputs.value }}
+      - name: Tara — PostgreSQL imajı
+        if: always()
+        run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy"
+          "$TRIVY" image $TRIVY_ARGS hashmark-postgres:scan
