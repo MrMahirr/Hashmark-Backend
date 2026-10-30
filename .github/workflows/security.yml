@@ -38,7 +38,7 @@ jobs:
         run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       # Trivy veritabanı (~100 MB) günde bir indirilir; aynı gün içindeki koşular önbellekten kullanır
       - name: Trivy veritabanı önbelleği
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ steps.day.outputs.value }}
